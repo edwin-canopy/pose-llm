@@ -1,9 +1,30 @@
 large_model: "Qwen/Qwen3-4B"
 small_model: "Qwen/Qwen3-1.8B"
 
-data_dir: "/mnt/somfs/pose_cond/input_ids_2x_12cb_shift"
+pose_data_dir: "/mnt/somfs/pose_cond/input_ids_2x_12cb_shift"
+audio_data_dir: "/mnt/somfs/pose_cond/audio_tokenized/tiktok-pipeline-merged"
 
 
-word_pad_token: 
-concat_pad_token: 
-start_of_word_token:
+
+
+# depth loss scalers
+alpha_audio: 0.1
+alpha_pose: 0.1
+
+
+backbone:
+  hidden_size: 
+
+
+audio_depth_model:
+  hidden_size:
+  residual_depth: 8
+  codebook_size: 2048
+  training_split: 0.25
+
+
+pose_depth_model:
+  hidden_size: 
+  residual_depth: 8
+  codebook_size: 1024
+  training_split: 0.25

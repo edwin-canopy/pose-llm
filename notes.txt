@@ -2,3 +2,5 @@ pose tokenizer must be causal
 
 text tokenizer: all but first word get prepended a space before tokenising
 check what qwen tokenizer does
+
+two depth transformers - one for audio, one for pose
