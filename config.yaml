@@ -1,0 +1,9 @@
+large_model: "Qwen/Qwen3-4B"
+small_model: "Qwen/Qwen3-1.8B"
+
+data_dir: "/mnt/somfs/pose_cond/input_ids_2x_12cb_shift"
+
+
+word_pad_token: 
+concat_pad_token: 
+start_of_word_token:
