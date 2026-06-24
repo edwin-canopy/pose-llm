@@ -23,13 +23,23 @@ class Collator:
 
 
     def assemble(self, sample):
-        text = sample["text"]
-        for dict_ in text:
-            for dict in
+        """
+        We assume text has structure {word, start, end} and add a new field tokens
+        """
 
         # 1. tokenize text
+        # note: maybe faster to do this once in dataset creation
+
+        text = sample["text"]
+        assert isinstance(text[0], dict)
+        text[0]["tokens"] = self.tokenizer.tokenize(text[0]["word"])
+        if len(text) > 1:
+            for i in range(1, len(text)):
+                text[i]["tokens"] = self.tokenizer.tokenize(text[i]["word"])
 
         # 1b. initialise tensors with pad everywhere
+
+        
 
         # 2. distribute tokens so that we have one word token per frame
 
@@ -57,6 +67,10 @@ class Collator:
         assert isinstance(samples, list)
 
         # call assmble and concatenate with separators
+        sequences = [self.assemble(sample) for sample in samples]
+
+        sequence_ids = [s["ids"] for s in sequences]
+        codes = [s["codes"] for s in sequences]
 
         pass
 
