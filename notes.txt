@@ -4,3 +4,7 @@ text tokenizer: all but first word get prepended a space before tokenising
 check what qwen tokenizer does
 
 two depth transformers - one for audio, one for pose
+
+Step 1 - pretrain on interleaved all 3 tasks (+ question answering?)
+Step 2 - conversational -> question answering, asr, streaming (?)
+Step 3 - conversational -> streaming generation end to end

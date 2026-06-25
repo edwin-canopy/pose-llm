@@ -5,6 +5,18 @@ pose_data_dir: "/mnt/somfs/pose_cond/input_ids_2x_12cb_shift"
 audio_data_dir: "/mnt/somfs/pose_cond/audio_tokenized/tiktok-pipeline-merged"
 
 
+special_tokens:
+  separator: 151936
+
+  new_word: 151943
+  word_pad: 151944
+
+  audio_tokens_start: 151946 # first audio token
+  audio_tokens_end: 153993 # 2048 zeroth codebook tokens
+
+  pose_padding_token: 153999 # used if pose fps != audio fps
+  pose_tokens_start: 154000 # first pose token
+  pose_tokens_end: 155024 # 1024 zeroth codebook tokens
 
 
 # depth loss scalers
@@ -17,14 +29,17 @@ backbone:
 
 
 audio_depth_model:
-  hidden_size:
+  path:           # HF checkpoint path used only to load the architecture (AutoConfig)
+  hidden_size:    # latent dim for the audio depth llm (override of the checkpoint default)
   residual_depth: 8
   codebook_size: 2048
   training_split: 0.25
+  frame_duration: 0.08  # audio tokenizer at 12.5 fps -- collator anchors on this
 
 
 pose_depth_model:
-  hidden_size: 
+  path:           # HF checkpoint path used only to load the architecture (AutoConfig)
+  hidden_size:    # latent dim for the pose depth llm (override of the checkpoint default)
   residual_depth: 8
   codebook_size: 1024
   training_split: 0.25

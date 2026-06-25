@@ -4,32 +4,22 @@ Uses Qwen 3-4B for backbone LLM
 
 import torch
 import torch.nn as nn
-from transformers import Qwen3ForCausalLM
+from transformers import (
+    AutoConfig,
+    Gemma4UnifiedForConditionalGeneration,
+    Qwen3ForCausalLM,
+)
 
 from models.swiglu import Swiglu
-
-from models.depth_model import DepthTransformer
 
 import yaml
 with open("config.yaml") as f:
     config = yaml.safe_load(f)
 
 
-SPEECH_SEPARATOR_TOKEN = 151936 # between horizontal concat of samples
-
 START_OF_ASR_TRANSCRIPT_TOKEN = 151937 # start of asr transcription token
 START_OF_ASR_TOKEN = 151938 # start of asr task token (before the transcribe this prompt)
 
-SPEECH_NEW_WORD_TOKEN = 151943
-SPEECH_WORD_PAD_TOKEN = 151944
-
-AUDIO_TOKENS_START = 151946
-AUDIO_TOKENS_END = 153993 # (2048 zeroth codebooks)
-
-POSE_PADDING_TOKEN = 143999
-
-POSE_TOKENS_START = 154000
-POSE_TOKENS_END = 155024 # (1024 zeroth codebooks)
 
 
 class EndToEndModel(Qwen3ForCausalLM):
@@ -37,27 +27,41 @@ class EndToEndModel(Qwen3ForCausalLM):
     def __init__(self, config, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self.audio_depth_model = DepthTransformer(config)
-        self.pose_depth_model = DepthTransformer(config)
+        backbone_cfg = config["backbone"]
+        audio_cfg = config["audio_depth_model"]
+        pose_cfg = config["pose_depth_model"]
 
-        self.hidden_size = config["backbone"]["hidden_size"]
-        self.audio_hidden_size = config["audio_depth_model"]["hidden_size"]
-        self.pose_hidden_size = config["pose_depth_model"]["hidden_size"]
+        self.hidden_size = backbone_cfg["hidden_size"]
+        self.audio_hidden_size = audio_cfg["hidden_size"]
+        self.pose_hidden_size = pose_cfg["hidden_size"]
 
-        self.audio_depth = config["audio_depth_model"]["residual_depth"]
-        self.pose_depth = config["pose_depth_model"]["residual_depth"]
+        self.audio_depth = audio_cfg["residual_depth"]
+        self.pose_depth = pose_cfg["residual_depth"]
+        self.audio_codebook_size = audio_cfg["codebook_size"]
+        self.pose_codebook_size = pose_cfg["codebook_size"]
 
-        self.audio_codebook_size = config["audio_depth_model"]["codebook_size"]
-        self.pose_codebook_size = config["pose_depth_model"]["codebook_size"]
+        # depth llms: mirror qwen-train/models/qwen_model.py:23-32 -- load
+        # AutoConfig from a HF checkpoint to get the architecture defaults,
+        # override vocab_size to (residual_depth * codebook_size), override
+        # hidden_size from config.yaml, then instantiate the HF class directly
+        # (random init -- no from_pretrained). One config per modality so the
+        # two latent dims are independent.
+        audio_depth_config = AutoConfig.from_pretrained(audio_cfg["path"])
+        audio_depth_config.vocab_size = self.audio_depth * self.audio_codebook_size
+        audio_depth_config.hidden_size = self.audio_hidden_size
+        self.audio_depth_model = Gemma4UnifiedForConditionalGeneration(audio_depth_config)
 
-        self.alpha_audio = config["alpha_audio"]
-        self.alpha_pose = config["alpha_pose"]
-        self.audio_model_train_split = config["audio_depth_model"]["training_split"]
-        self.pose_model_train_split = config["pose_depth_model"]["training_split"]
+        pose_depth_config = AutoConfig.from_pretrained(pose_cfg["path"])
+        pose_depth_config.vocab_size = self.pose_depth * self.pose_codebook_size
+        pose_depth_config.hidden_size = self.pose_hidden_size
+        self.pose_depth_model = Gemma4UnifiedForConditionalGeneration(pose_depth_config)
 
+        # backbone-hidden -> modality-hidden seed used by each depth llm
         self.audio_projection = nn.Linear(self.hidden_size, self.audio_hidden_size)
         self.pose_projection = nn.Linear(self.hidden_size, self.pose_hidden_size)
 
+        # backbone-side embedding tables for the summed codebook tail
+        # (one slot per (codebook, code) pair, matches collator's per-codebook offsets)
         self.audio_embedding = nn.Embedding(
             self.audio_depth * self.audio_codebook_size, self.hidden_size
         )
@@ -65,9 +69,14 @@ class EndToEndModel(Qwen3ForCausalLM):
             self.pose_depth * self.pose_codebook_size, self.hidden_size
         )
 
-        self.logmel_projection = Swiglu(
-            ... todo
-        )
+        self.alpha_audio = config["alpha_audio"]
+        self.alpha_pose = config["alpha_pose"]
+        self.audio_model_train_split = audio_cfg["training_split"]
+        self.pose_model_train_split = pose_cfg["training_split"]
+
+        # self.logmel_projection = Swiglu(
+        #
+        # )
 
 
     def forward(self):
@@ -187,6 +196,8 @@ class EndToEndModel(Qwen3ForCausalLM):
 
         TODO pose pad handle at half of original fps
         """
+        raise NotImplementedError("pose padding needs to be handled")
+
         not_separator_mask = ~separator_mask
 
         llm_embeddings = self.get_input_embeddings()(backbone_ids)
