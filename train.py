@@ -11,10 +11,10 @@ os.makedirs(os.environ["TRITON_CACHE_DIR"], exist_ok=True)
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 import yaml
-from transformers import AutoTokenizer, TrainingArguments
+from transformers import AutoConfig, AutoTokenizer, TrainingArguments
 
 from collators.monostream_pose_collator import PoseSpeechMonoCollator
-from models.backbone_model import EndToEndModel
+from models.backbone_model import DEFAULT_BACKBONE_ARCH, EndToEndModel
 
 # TODO: implement these
 # from collators.asr_collator import ASRCollator
@@ -23,7 +23,7 @@ from models.backbone_model import EndToEndModel
 # from training_components.custom_trainer import MultiTaskTrainer
 
 
-CONFIG = yaml.safe_load(open(os.environ.get("CONFIG_PATH", "config.yaml")))
+CONFIG = yaml.safe_load(open("config.yaml"))
 BACKBONE_CONFIG = CONFIG["backbone"]
 AUDIO_DEPTH_CONFIG = CONFIG["audio_depth_model"]
 POSE_DEPTH_CONFIG = CONFIG["pose_depth_model"]
@@ -38,14 +38,18 @@ os.environ["WANDB_PROJECT"] = WANDB_CONFIG.get("project", "pose-llm")
 
 
 # tokenizer ------------------------------------------------------------------
-tokenizer = AutoTokenizer.from_pretrained(CONFIG["large_model"])
+tokenizer = AutoTokenizer.from_pretrained(DEFAULT_BACKBONE_ARCH)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
 
 # model ----------------------------------------------------------------------
 # EndToEndModel: Qwen3 backbone + audio_depth_model + pose_depth_model
-model = EndToEndModel.from_pretrained(CONFIG["large_model"], config=CONFIG)
+if BACKBONE_CONFIG["weights_path"]:
+    model = EndToEndModel.from_pretrained(BACKBONE_CONFIG["weights_path"], config=CONFIG)
+else:
+    backbone_arch_config = AutoConfig.from_pretrained(DEFAULT_BACKBONE_ARCH)
+    model = EndToEndModel(backbone_arch_config, config=CONFIG)
 
 # Resize backbone embeddings to cover the special tokens + audio/pose ranges
 # (last reserved id from config.yaml is pose_tokens_end)

@@ -1,5 +1,3 @@
-large_model: "Qwen/Qwen3-4B"
-small_model: "Qwen/Qwen3-1.8B"
 
 pose_data_dir: "/mnt/somfs/pose_cond/input_ids_2x_12cb_shift"
 audio_data_dir: "/mnt/somfs/pose_cond/audio_tokenized/tiktok-pipeline-merged"
@@ -25,12 +23,13 @@ alpha_pose: 0.1
 
 
 backbone:
-  hidden_size: 
+  weights_path: null   # if set, load pretrained weights from here; architecture is fixed (see DEFAULT_BACKBONE_ARCH)
+  hidden_size: 2600
 
 
 audio_depth_model:
-  path:           # HF checkpoint path used only to load the architecture (AutoConfig)
-  hidden_size:    # latent dim for the audio depth llm (override of the checkpoint default)
+  weights_path: null   # if set, load pretrained weights from here; architecture is fixed (see DEFAULT_DEPTH_ARCH)
+  hidden_size: 960   # latent dim for the audio depth llm (override of the checkpoint default)
   residual_depth: 8
   codebook_size: 2048
   training_split: 0.25
@@ -38,8 +37,8 @@ audio_depth_model:
 
 
 pose_depth_model:
-  path:           # HF checkpoint path used only to load the architecture (AutoConfig)
-  hidden_size:    # latent dim for the pose depth llm (override of the checkpoint default)
+  weights_path: null   # if set, load pretrained weights from here; architecture is fixed (see DEFAULT_DEPTH_ARCH)
+  hidden_size: 960   # latent dim for the pose depth llm (override of the checkpoint default)
   residual_depth: 8
   codebook_size: 1024
   training_split: 0.25

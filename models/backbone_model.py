@@ -6,16 +6,14 @@ import torch
 import torch.nn as nn
 from transformers import (
     AutoConfig,
-    Gemma4UnifiedForConditionalGeneration,
+    LlamaForCausalLM,
     Qwen3ForCausalLM,
 )
 
+DEFAULT_BACKBONE_ARCH = "Qwen/Qwen3-4B"
+DEFAULT_DEPTH_ARCH = "HuggingFaceTB/SmolLM2-360M"
+
 from models.swiglu import Swiglu
-
-import yaml
-with open("config.yaml") as f:
-    config = yaml.safe_load(f)
-
 
 START_OF_ASR_TRANSCRIPT_TOKEN = 151937 # start of asr transcription token
 START_OF_ASR_TOKEN = 151938 # start of asr task token (before the transcribe this prompt)
@@ -40,21 +38,25 @@ class EndToEndModel(Qwen3ForCausalLM):
         self.audio_codebook_size = audio_cfg["codebook_size"]
         self.pose_codebook_size = pose_cfg["codebook_size"]
 
-        # depth llms: mirror qwen-train/models/qwen_model.py:23-32 -- load
-        # AutoConfig from a HF checkpoint to get the architecture defaults,
-        # override vocab_size to (residual_depth * codebook_size), override
-        # hidden_size from config.yaml, then instantiate the HF class directly
-        # (random init -- no from_pretrained). One config per modality so the
-        # two latent dims are independent.
-        audio_depth_config = AutoConfig.from_pretrained(audio_cfg["path"])
+        audio_depth_config = AutoConfig.from_pretrained(DEFAULT_DEPTH_ARCH)
         audio_depth_config.vocab_size = self.audio_depth * self.audio_codebook_size
         audio_depth_config.hidden_size = self.audio_hidden_size
-        self.audio_depth_model = Gemma4UnifiedForConditionalGeneration(audio_depth_config)
+        if audio_cfg["weights_path"]:
+            self.audio_depth_model = LlamaForCausalLM.from_pretrained(
+                audio_cfg["weights_path"], config=audio_depth_config
+            )
+        else:
+            self.audio_depth_model = LlamaForCausalLM(audio_depth_config)
 
-        pose_depth_config = AutoConfig.from_pretrained(pose_cfg["path"])
+        pose_depth_config = AutoConfig.from_pretrained(DEFAULT_DEPTH_ARCH)
         pose_depth_config.vocab_size = self.pose_depth * self.pose_codebook_size
         pose_depth_config.hidden_size = self.pose_hidden_size
-        self.pose_depth_model = Gemma4UnifiedForConditionalGeneration(pose_depth_config)
+        if pose_cfg["weights_path"]:
+            self.pose_depth_model = LlamaForCausalLM.from_pretrained(
+                pose_cfg["weights_path"], config=pose_depth_config
+            )
+        else:
+            self.pose_depth_model = LlamaForCausalLM(pose_depth_config)
 
         # backbone-hidden -> modality-hidden seed used by each depth llm
         self.audio_projection = nn.Linear(self.hidden_size, self.audio_hidden_size)
