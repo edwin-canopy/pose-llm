@@ -15,9 +15,9 @@ DEFAULT_DEPTH_ARCH = "HuggingFaceTB/SmolLM2-360M"
 
 from models.swiglu import Swiglu
 
+# check these against repo
 START_OF_ASR_TRANSCRIPT_TOKEN = 151937 # start of asr transcription token
 START_OF_ASR_TOKEN = 151938 # start of asr task token (before the transcribe this prompt)
-
 
 
 class EndToEndModel(Qwen3ForCausalLM):
@@ -81,12 +81,8 @@ class EndToEndModel(Qwen3ForCausalLM):
         # )
 
 
-    def forward(self):
-        """
-        depth model gets zeroth codebook + zeroth codebook latent and predicts next d-1 latents
-        mask loss on first two conditioning latents
-        """
-        pass
+    def forward(self, **kwargs):
+        return self.forward_speech_pose(**kwargs)
 
 
     def forward_text(
@@ -188,18 +184,11 @@ class EndToEndModel(Qwen3ForCausalLM):
         audio_depth_ids,
         pose_depth_ids,
         separator_mask,
-        pose_pad_mask,
         **kwargs
     ):
         """
         backbone ids: (S, 3) - text, zeroth audio codebook, zeroth pose codebook
-
-        note pose tokenizer is at 6.25 fps, so every other pose token is a pose padding token
-
-        TODO pose pad handle at half of original fps
         """
-        raise NotImplementedError("pose padding needs to be handled")
-
         not_separator_mask = ~separator_mask
 
         llm_embeddings = self.get_input_embeddings()(backbone_ids)

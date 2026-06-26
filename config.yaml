@@ -3,9 +3,16 @@ pose_data_dir: "/mnt/somfs/pose_cond/input_ids_2x_12cb_shift"
 audio_data_dir: "/mnt/somfs/pose_cond/audio_tokenized/tiktok-pipeline-merged"
 
 
+training:
+  gpu_minibatch_size: 1
+  eval_rows: 10000
+  bf16: true
+  gradient_checkpointing: true
+
 special_tokens:
   separator: 151936
-
+  
+  # used in interleaved setting
   new_word: 151943
   word_pad: 151944
 
@@ -14,7 +21,7 @@ special_tokens:
 
   pose_padding_token: 153999 # used if pose fps != audio fps
   pose_tokens_start: 154000 # first pose token
-  pose_tokens_end: 155024 # 1024 zeroth codebook tokens
+  pose_tokens_end: 155023 # 1024 zeroth codebook tokens
 
 
 # depth loss scalers
@@ -24,7 +31,9 @@ alpha_pose: 0.1
 
 backbone:
   weights_path: null   # if set, load pretrained weights from here; architecture is fixed (see DEFAULT_BACKBONE_ARCH)
-  hidden_size: 2600
+  hidden_size: 2560
+
+  lookahead: none # TODO
 
 
 audio_depth_model:

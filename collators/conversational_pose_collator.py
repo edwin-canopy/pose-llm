@@ -7,7 +7,25 @@ class PoseSpeechUserTextCollator:
     - user text input (non-streaming)
     - outputs interleaved assistant text, audio and pose
     """
-    pass
+    def __init__(
+        self,
+        tokenizer,
+        config,
+    ):
+        pass
+
+
+    def assemble(self, sample):
+        pass
+
+    
+    def __call__(self, samples):
+        pass
+    
+
+
+
+
 
 
 class PoseSpeechUserAudioCollator:

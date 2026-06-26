@@ -21,7 +21,10 @@ from models.backbone_model import DEFAULT_BACKBONE_ARCH, EndToEndModel
 # from collators.conversational_pose_collator import ConversationalPoseCollator
 # from dataset import load_pose_speech_dataset, load_asr_dataset, load_conversational_dataset
 # from training_components.custom_trainer import MultiTaskTrainer
-
+from collators import (
+    PoseSpeechMonoCollator,
+    ASRCollator
+)
 
 CONFIG = yaml.safe_load(open("config.yaml"))
 BACKBONE_CONFIG = CONFIG["backbone"]
@@ -57,38 +60,17 @@ model.resize_token_embeddings(
     SPECIAL_TOKEN_CONFIG["pose_tokens_end"] + 1, mean_resizing=False
 )
 
+# disable KV cache during training
 model.config.use_cache = False
-# TODO: turn off cache on the two depth models once their HF configs are wired
-# model.audio_depth_model.config.use_cache = False
-# model.pose_depth_model.config.use_cache = False
+model.audio_depth_model.config.use_cache = False
+model.pose_depth_model.config.use_cache = False
 
 
 # collators ------------------------------------------------------------------
 collators = {
     "speech_pose": PoseSpeechMonoCollator(tokenizer, CONFIG),
-    # TODO:
     # "asr": ASRCollator(tokenizer, CONFIG),
     # "conversational": ConversationalPoseCollator(tokenizer, CONFIG),
-}
-
-
-# datasets -------------------------------------------------------------------
-# TODO: implement loaders in dataset.py and wire them in here
-loaders = {
-    # "speech_pose": load_pose_speech_dataset,
-    # "asr": load_asr_dataset,
-    # "conversational": load_conversational_dataset,
-}
-
-shuffle_by_task = {
-    "speech_pose": os.environ.get("SPEECH_POSE_SHUFFLE", "1") != "0",
-    "asr": os.environ.get("ASR_SHUFFLE", "1") != "0",
-    "conversational": os.environ.get("CONV_SHUFFLE", "1") != "0",
-}
-raw = {
-    name: loaders[name](shuffle=shuffle_by_task.get(name, True))
-    for name in SCHEDULED_TASKS
-    if name in loaders
 }
 
 # Hold out first eval_n rows of each dataset for eval; train on the rest.
@@ -111,20 +93,19 @@ if EVAL_CONFIG is not None:
 # trainer --------------------------------------------------------------------
 args = TrainingArguments(**TRAINING_ARGS_CONFIG, run_name=WANDB_CONFIG.get("run_name"))
 
-# TODO: port MultiTaskTrainer from qwen-train/training_components/custom_trainer.py
-# and adapt for two depth models (audio + pose). For now this is a stub.
-# trainer = MultiTaskTrainer(
-#     model=model,
-#     args=args,
-#     train_dataset=next(iter(tasks.values()))[0],
-#     tasks=tasks,
-#     schedule=MULTITASK_CONFIG["schedule"],
-#     length=MULTITASK_CONFIG["length"],
-#     eval_tasks=eval_tasks,
-#     eval_steps=EVAL_CONFIG["steps"] if EVAL_CONFIG else None,
-# )
 
-# resume = os.environ.get("RESUME_FROM_CHECKPOINT") or None
-# if resume in ("1", "true", "True"):
-#     resume = True
-# trainer.train(resume_from_checkpoint=resume)
+trainer = MultiTaskTrainer(
+    model=model,
+    args=args,
+    train_dataset=next(iter(tasks.values()))[0],
+    tasks=tasks,
+    schedule=MULTITASK_CONFIG["schedule"],
+    length=MULTITASK_CONFIG["length"],
+    eval_tasks=eval_tasks,
+    eval_steps=EVAL_CONFIG["steps"] if EVAL_CONFIG else None,
+)
+
+resume = os.environ.get("RESUME_FROM_CHECKPOINT") or None
+if resume in ("1", "true", "True"):
+    resume = True
+trainer.train(resume_from_checkpoint=resume)
