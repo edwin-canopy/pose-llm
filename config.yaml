@@ -3,11 +3,39 @@ pose_data_dir: "/mnt/somfs/pose_cond/input_ids_2x_12cb_shift"
 audio_data_dir: "/mnt/somfs/pose_cond/audio_tokenized/tiktok-pipeline-merged"
 
 
+wandb:
+  project: pose-llm
+  entity: null                     # set to wandb team/user; null lets WANDB_ENTITY env var or wandb default take over
+  run_name: pose-llm-test-interleaved     # overridable per run with RUN_NAME env var
+
+
 training:
+  seed: 47
   gpu_minibatch_size: 1
   eval_rows: 10000
+  target_frames: 3000             # per-rank token budget for length-packed batches; set equal to max_sequence_length so every step is the same shape across ranks (no FSDP straggler bubble)
+  max_sequence_length: 3000       # hard cap on post-concat sequence length; longer sequences are truncated
+  keep_checkpoints: 3             # HF Trainer keeps at most this many checkpoint-* dirs; older ones get deleted on each save
+  logging_steps: 1                # how often to flush loss/lr/grad_norm to wandb (HF Trainer default is 500, way too sparse)
   bf16: true
-  gradient_checkpointing: true
+  gradient_checkpointing: false   # use fsdp_config.activation_checkpointing instead
+  dataloader_num_workers: 16                # parallel batch prefetch processes
+  dataloader_persistent_workers: true # todo
+  attn_implementation: flash_attention_2   # broadcast to backbone + depth models
+  liger_kernels: true                      # patch Qwen3 backbone + both Llama depth models
+  liger_kernel_config:
+    rope: true
+    rms_norm: true
+    swiglu: true
+    cross_entropy: true
+    fused_linear_cross_entropy: false
+  fsdp: "full_shard auto_wrap"
+  fsdp_config:
+    activation_checkpointing: false
+    transformer_layer_cls_to_wrap:
+      - Qwen3DecoderLayer
+      - LlamaDecoderLayer
+    use_orig_params: true
 
 special_tokens:
   separator: 151936

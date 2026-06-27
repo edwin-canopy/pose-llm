@@ -9,6 +9,9 @@ dependencies = [
     "datasets>=5.0.0",
     "transformers>=5.12.1",
     "accelerate>=1.14.0",
+    "flash-attn==2.8.3",
+    "liger-kernel>=0.8.0",
+    "wandb",
 ]
 
 [tool.uv]

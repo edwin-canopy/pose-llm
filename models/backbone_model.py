@@ -38,7 +38,10 @@ class EndToEndModel(Qwen3ForCausalLM):
         self.audio_codebook_size = audio_cfg["codebook_size"]
         self.pose_codebook_size = pose_cfg["codebook_size"]
 
-        audio_depth_config = AutoConfig.from_pretrained(DEFAULT_DEPTH_ARCH)
+        attn_impl = config["training"]["attn_implementation"]
+        audio_depth_config = AutoConfig.from_pretrained(
+            DEFAULT_DEPTH_ARCH, attn_implementation=attn_impl
+        )
         audio_depth_config.vocab_size = self.audio_depth * self.audio_codebook_size
         audio_depth_config.hidden_size = self.audio_hidden_size
         if audio_cfg["weights_path"]:
@@ -48,7 +51,9 @@ class EndToEndModel(Qwen3ForCausalLM):
         else:
             self.audio_depth_model = LlamaForCausalLM(audio_depth_config)
 
-        pose_depth_config = AutoConfig.from_pretrained(DEFAULT_DEPTH_ARCH)
+        pose_depth_config = AutoConfig.from_pretrained(
+            DEFAULT_DEPTH_ARCH, attn_implementation=attn_impl
+        )
         pose_depth_config.vocab_size = self.pose_depth * self.pose_codebook_size
         pose_depth_config.hidden_size = self.pose_hidden_size
         if pose_cfg["weights_path"]:

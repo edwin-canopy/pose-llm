@@ -31,6 +31,7 @@ class PoseSpeechMonoCollator:
         self.audio_depth = config["audio_depth_model"]["residual_depth"]
         self.audio_codebook_size = config["audio_depth_model"]["codebook_size"]
         self.frame_duration = config["audio_depth_model"]["frame_duration"]
+        self.max_sequence_length = config["training"]["max_sequence_length"]
 
 
     def mark_word_starts(self, frames):
@@ -78,11 +79,12 @@ class PoseSpeechMonoCollator:
             f"audio={T_audio} pose={T_pose}"
         )
         if T_audio != T_pose:
-            print(
-                f"warning: off-by-one audio/pose mismatch (audio={T_audio} "
-                f"pose={T_pose}); truncating to shorter",
-                flush=True,
-            )
+            pass
+            # print(
+            #     f"warning: off-by-one audio/pose mismatch (audio={T_audio} "
+            #     f"pose={T_pose}); truncating to shorter",
+            #     flush=True,
+            # )
         num_frames = min(T_audio, T_pose)
         audio_tokens = audio_tokens[:, :num_frames]
         pose_tokens = pose_tokens[:, :num_frames]
@@ -167,11 +169,22 @@ class PoseSpeechMonoCollator:
             pose_codes.insert(i, sep_pose)
             masks.insert(i, sep_mask)
 
+        backbone_ids = torch.cat(sequence_ids, dim=0).unsqueeze(0)
+        audio_depth_ids = torch.cat(audio_codes, dim=0).unsqueeze(0)
+        pose_depth_ids = torch.cat(pose_codes, dim=0).unsqueeze(0)
+        separator_mask = torch.cat(masks, dim=0).unsqueeze(0)
+
+        # hard cap on per-step sequence length (post-concat)
+        backbone_ids = backbone_ids[:, : self.max_sequence_length]
+        audio_depth_ids = audio_depth_ids[:, : self.max_sequence_length]
+        pose_depth_ids = pose_depth_ids[:, : self.max_sequence_length]
+        separator_mask = separator_mask[:, : self.max_sequence_length]
+
         return {
-            "backbone_ids": torch.cat(sequence_ids, dim=0).unsqueeze(0),
-            "audio_depth_ids": torch.cat(audio_codes, dim=0).unsqueeze(0),
-            "pose_depth_ids": torch.cat(pose_codes, dim=0).unsqueeze(0),
-            "separator_mask": torch.cat(masks, dim=0).unsqueeze(0),
+            "backbone_ids": backbone_ids,
+            "audio_depth_ids": audio_depth_ids,
+            "pose_depth_ids": pose_depth_ids,
+            "separator_mask": separator_mask,
         }
 
 

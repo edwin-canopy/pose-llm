@@ -1,0 +1,2 @@
+  0%|                                                                                                                                                                  | 0/34776 [00:00<?, ?it/s][transformers] `loss_type=None` was set in the config but it is unrecognized. Using the default loss: `ForCausalLMLoss`.
+ 12%|██████████████████▍                                                                                                                                 | 4334/34776 [06:50<10:03:25,  1.19s/it]
