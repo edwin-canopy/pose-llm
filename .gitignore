@@ -7,3 +7,4 @@ uv.lock
 *.pt
 *.bin
 outputs/
+wandb/
