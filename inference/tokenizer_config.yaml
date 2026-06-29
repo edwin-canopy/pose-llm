@@ -1,0 +1,19 @@
+# Pose tokenizer settings consumed by inference/decode_pose.py.
+# `package` selects which tokenizer to use; the matching <package>_path supplies
+# the weights. `n_codebooks` is the only field that overrides the checkpoint's
+# baked-in config; everything else comes from the checkpoint's config.json.
+
+package: james              # "james" or "xabi"
+james_path: "/mnt/somfs/james-checkpoints/pose-tokenizer-james/cb_size_2048/base-causal-2x-wide-16cb-qd0.5-lr1e-4-lossshift1-root-frame-0-cb_size_2048/step_200000"
+xabi_path: "/mnt/somfs/xabi-checkpoints/pose-tokenizer-2x-12cb-lossshift1"   # HF repo id or local dir
+
+n_codebooks: 8              # null = use all codebooks from the checkpoint; otherwise clamp to first N (must be <= checkpoint n_codebooks)
+
+inference_outputs_dir: "/home/edwin/pose-llm/inference_outputs"
+device: auto                # "auto" -> cuda if available else cpu
+
+gif:
+  fps: 2
+  canvas: 512
+  dot_radius: 3
+  padding: 16

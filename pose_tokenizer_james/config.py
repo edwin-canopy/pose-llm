@@ -29,7 +29,7 @@ class PoseTokenizerConfig:
     # Quantization (RVQ)
     codebook_size: int = 4096
     codebook_dim: int = 8
-    n_codebooks: int = 4
+    n_codebooks: int = 8
     vq_strides: List[int] = field(
         default_factory=lambda: [1] * 16
     )
