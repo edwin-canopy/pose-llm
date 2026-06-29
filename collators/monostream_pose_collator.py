@@ -33,6 +33,12 @@ class PoseSpeechMonoCollator:
         self.frame_duration = config["audio_depth_model"]["frame_duration"]
         self.max_sequence_length = config["training"]["max_sequence_length"]
 
+        # K-frame lookahead via pad-and-shift (qwen-train style). null keeps the
+        # existing opportunistic shift_left codepath.
+        self.lookahead = config["backbone"]["lookahead"]
+        if self.lookahead is not None:
+            self.lookahead_padding_token = special["lookahead_padding_token"]
+
 
     def mark_word_starts(self, frames):
         for pos in range(1, len(frames)):
@@ -102,38 +108,90 @@ class PoseSpeechMonoCollator:
                 write_pos = pos
                 pos += 1
 
-        # 2b. shift text to give lookahead (where possible)
+        if self.lookahead is None:
+            # 2b. shift text to give lookahead (where possible)
 
-        frames = self.shift_left(frames)
+            frames = self.shift_left(frames)
 
-        # 2c. add new word tokens before subsequent new words
+            # 2c. add new word tokens before subsequent new words
+
+            frames = self.mark_word_starts(frames)
+
+            # 3. stack codebook tokens with text tokens
+
+            sequence_ids = torch.empty((num_frames, 3), dtype=torch.long)
+            sequence_ids[:, 0] = torch.tensor(frames, dtype=torch.long)
+
+            # 4. add audio/pose offsets so zeroth-codebook tokens fall in their reserved ranges
+
+            sequence_ids[:, 1] = audio_tokens[0] + self.audio_tokens_start
+            sequence_ids[:, 2] = pose_tokens[0] + self.pose_tokens_start
+
+            pose_code_columns = [
+                pose_tokens[d] + d * self.pose_codebook_size for d in range(self.pose_depth)
+            ]
+            pose_codes = torch.stack(pose_code_columns, dim=1)
+
+            audio_code_columns = [
+                audio_tokens[d] + d * self.audio_codebook_size for d in range(self.audio_depth)
+            ]
+            audio_codes = torch.stack(audio_code_columns, dim=1)
+
+            lookahead_mask = torch.zeros((num_frames, 3), dtype=torch.bool)
+
+            return {
+                "ids": sequence_ids,
+                "audio_codes": audio_codes,
+                "pose_codes": pose_codes,
+                "lookahead_mask": lookahead_mask,
+            }
+
+        # K-frame lookahead via pad-and-shift (qwen-train style). Audio/pose are
+        # fed K frames ahead of the text/code targets they predict: backbone text
+        # is left-padded by K with lookahead_padding_token; audio/pose cb0 in
+        # backbone are right-padded by K with lookahead_padding_token; residual
+        # codebooks are right-padded with zeros (never consumed: loss code is
+        # expected to mask them via lookahead_mask).
+        K = self.lookahead
+        pad_id = self.lookahead_padding_token
+        total = num_frames + K
 
         frames = self.mark_word_starts(frames)
 
-        # 3. stack codebook tokens with text tokens
+        sequence_ids = torch.empty((total, 3), dtype=torch.long)
+        # text: left-pad K, then real frames
+        sequence_ids[:K, 0] = pad_id
+        sequence_ids[K:, 0] = torch.tensor(frames, dtype=torch.long)
+        # audio cb0: real for first N, right-pad K
+        sequence_ids[:num_frames, 1] = audio_tokens[0] + self.audio_tokens_start
+        sequence_ids[num_frames:, 1] = pad_id
+        # pose cb0: real for first N, right-pad K
+        sequence_ids[:num_frames, 2] = pose_tokens[0] + self.pose_tokens_start
+        sequence_ids[num_frames:, 2] = pad_id
 
-        sequence_ids = torch.empty((num_frames, 3), dtype=torch.long)
-        sequence_ids[:, 0] = torch.tensor(frames, dtype=torch.long)
+        audio_codes = torch.zeros((total, self.audio_depth), dtype=torch.long)
+        for d in range(self.audio_depth):
+            audio_codes[:num_frames, d] = audio_tokens[d] + d * self.audio_codebook_size
 
-        # 4. add audio/pose offsets so zeroth-codebook tokens fall in their reserved ranges
+        pose_codes = torch.zeros((total, self.pose_depth), dtype=torch.long)
+        for d in range(self.pose_depth):
+            pose_codes[:num_frames, d] = pose_tokens[d] + d * self.pose_codebook_size
 
-        sequence_ids[:, 1] = audio_tokens[0] + self.audio_tokens_start
-        sequence_ids[:, 2] = pose_tokens[0] + self.pose_tokens_start
-
-        pose_code_columns = [
-            pose_tokens[d] + d * self.pose_codebook_size for d in range(self.pose_depth)
-        ]
-        pose_codes = torch.stack(pose_code_columns, dim=1)
-
-        audio_code_columns = [
-            audio_tokens[d] + d * self.audio_codebook_size for d in range(self.audio_depth)
-        ]
-        audio_codes = torch.stack(audio_code_columns, dim=1)
+        # Per-column lookahead mask (S, 3): True where the target at that column
+        # is lookahead_padding_token and must be excluded from the loss.
+        # - col 0 (text):     leading K frames (left-pad)
+        # - col 1 (audio cb0): trailing K frames (right-pad)
+        # - col 2 (pose cb0):  trailing K frames (right-pad)
+        lookahead_mask = torch.zeros((total, 3), dtype=torch.bool)
+        lookahead_mask[:K, 0] = True
+        lookahead_mask[num_frames:, 1] = True
+        lookahead_mask[num_frames:, 2] = True
 
         return {
             "ids": sequence_ids,
             "audio_codes": audio_codes,
             "pose_codes": pose_codes,
+            "lookahead_mask": lookahead_mask,
         }
 
 
@@ -147,6 +205,9 @@ class PoseSpeechMonoCollator:
         - audio_depth_ids: Tensor (1, S, audio_depth)
         - pose_depth_ids: Tensor (1, S, pose_depth)
         - separator_mask: Tensor (1, S)
+        - lookahead_mask: Tensor (1, S, 3) # per-column: True where the target at
+          that column is lookahead_padding_token. col 0 (text) is set on the
+          leading K frames; cols 1/2 (audio/pose cb0) are set on the trailing K.
         """
         assert isinstance(samples, list)
 
@@ -157,34 +218,40 @@ class PoseSpeechMonoCollator:
         audio_codes = [s["audio_codes"] for s in sequences]
         pose_codes = [s["pose_codes"] for s in sequences]
         masks = [torch.zeros((s.shape[0],), dtype=torch.bool) for s in sequence_ids]
+        lookahead_masks = [s["lookahead_mask"] for s in sequences]
 
         # interleave separator frames between consecutive samples
         sep_backbone = torch.full((1, 3), self.separator, dtype=torch.long)
         sep_audio = torch.full((1, self.audio_depth), -1, dtype=torch.long)
         sep_pose = torch.full((1, self.pose_depth), -1, dtype=torch.long)
         sep_mask = torch.ones((1,), dtype=torch.bool)
+        sep_lookahead = torch.zeros((1, 3), dtype=torch.bool)
         for i in range(len(sequences) - 1, 0, -1):
             sequence_ids.insert(i, sep_backbone)
             audio_codes.insert(i, sep_audio)
             pose_codes.insert(i, sep_pose)
             masks.insert(i, sep_mask)
+            lookahead_masks.insert(i, sep_lookahead)
 
         backbone_ids = torch.cat(sequence_ids, dim=0).unsqueeze(0)
         audio_depth_ids = torch.cat(audio_codes, dim=0).unsqueeze(0)
         pose_depth_ids = torch.cat(pose_codes, dim=0).unsqueeze(0)
         separator_mask = torch.cat(masks, dim=0).unsqueeze(0)
+        lookahead_mask = torch.cat(lookahead_masks, dim=0).unsqueeze(0)
 
         # hard cap on per-step sequence length (post-concat)
         backbone_ids = backbone_ids[:, : self.max_sequence_length]
         audio_depth_ids = audio_depth_ids[:, : self.max_sequence_length]
         pose_depth_ids = pose_depth_ids[:, : self.max_sequence_length]
         separator_mask = separator_mask[:, : self.max_sequence_length]
+        lookahead_mask = lookahead_mask[:, : self.max_sequence_length]
 
         return {
             "backbone_ids": backbone_ids,
             "audio_depth_ids": audio_depth_ids,
             "pose_depth_ids": pose_depth_ids,
             "separator_mask": separator_mask,
+            "lookahead_mask": lookahead_mask,
         }
 
 

@@ -191,33 +191,45 @@ class EndToEndModel(Qwen3ForCausalLM):
         audio_depth_ids,
         pose_depth_ids,
         separator_mask,
+        lookahead_mask=None,
         **kwargs
     ):
         """
         backbone ids: (S, 3) - text, zeroth audio codebook, zeroth pose codebook
+        lookahead_mask: (B, S, 3) - True where the target at that column is
+            lookahead_padding_token (collator-emitted). Excluded from the
+            backbone loss and from the audio/pose depth-tail passes.
         """
         not_separator_mask = ~separator_mask
+
+        if lookahead_mask is None:
+            lookahead_mask = torch.zeros((*backbone_ids.shape[:2], 3), dtype=torch.bool, device=backbone_ids.device)
+
+        # Per-column "keep" masks: real (not separator, not lookahead pad).
+        keep_audio = not_separator_mask & ~lookahead_mask[..., 1]
+        keep_pose = not_separator_mask & ~lookahead_mask[..., 2]
 
         llm_embeddings = self.get_input_embeddings()(backbone_ids)
         text_embeds = llm_embeddings[:, :, 0]
         audio_embeds = llm_embeddings[:, :, 1].clone()
         pose_embeds = llm_embeddings[:, :, 2].clone()
 
-        true_audio_depth_ids = audio_depth_ids[not_separator_mask]
+        true_audio_depth_ids = audio_depth_ids[keep_audio]
         tail_audio_ids = true_audio_depth_ids[:, 1:] # codebooks 1-7
         tail_audio_embeds = self.audio_embedding(tail_audio_ids).sum(dim=1)
-        audio_embeds[not_separator_mask] = audio_embeds[not_separator_mask] + tail_audio_embeds # add higher order codebooks
+        audio_embeds[keep_audio] = audio_embeds[keep_audio] + tail_audio_embeds # add higher order codebooks
 
-        true_pose_depth_ids = pose_depth_ids[not_separator_mask]
+        true_pose_depth_ids = pose_depth_ids[keep_pose]
         tail_pose_ids = true_pose_depth_ids[:, 1:] # codebooks 1-7
         tail_pose_embeds = self.pose_embedding(tail_pose_ids).sum(dim=1)
-        pose_embeds[not_separator_mask] = pose_embeds[not_separator_mask] + tail_pose_embeds # add higher order codebooks
+        pose_embeds[keep_pose] = pose_embeds[keep_pose] + tail_pose_embeds # add higher order codebooks
 
         backbone_embeds = torch.stack([text_embeds, audio_embeds, pose_embeds], dim=2)
         interleaved_embeds = backbone_embeds.flatten(1, 2)  # (b, s, p, h) -> (b, s*p, h)
 
         labels = backbone_ids.clone()
         labels[separator_mask] = -100
+        labels[lookahead_mask] = -100  # mask lookahead-pad targets per column
         labels = labels.flatten(1, 2)  # (b, s, p) -> (b, s*p)
 
         if self.use_reference_pose:
@@ -241,12 +253,12 @@ class EndToEndModel(Qwen3ForCausalLM):
         backbone_hidden_states = backbone_outputs.hidden_states[-1]
 
         text_stride_offset = 1 if self.use_reference_pose else 0
-        text_hidden_states = backbone_hidden_states[:, text_stride_offset::3][not_separator_mask]
+        text_hidden_per_frame = backbone_hidden_states[:, text_stride_offset::3]
 
 
         # audio depth pass --------------
 
-        projected_hidden_states = self.audio_projection(text_hidden_states)
+        projected_hidden_states = self.audio_projection(text_hidden_per_frame[keep_audio])
         audio_depth_embeds = self.audio_depth_model.get_input_embeddings()(true_audio_depth_ids)
         audio_depth_inputs = torch.cat([projected_hidden_states.unsqueeze(1), audio_depth_embeds], dim=1)
 
@@ -274,7 +286,7 @@ class EndToEndModel(Qwen3ForCausalLM):
 
         # pose depth pass --------------
         
-        projected_hidden_states = self.pose_projection(text_hidden_states)
+        projected_hidden_states = self.pose_projection(text_hidden_per_frame[keep_pose])
         pose_depth_embeds = self.pose_depth_model.get_input_embeddings()(true_pose_depth_ids)
         pose_depth_inputs = torch.cat([projected_hidden_states.unsqueeze(1), pose_depth_embeds], dim=1)
 

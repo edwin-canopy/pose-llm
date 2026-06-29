@@ -47,6 +47,8 @@ special_tokens:
   audio_tokens_start: 151946 # first audio token
   audio_tokens_end: 153993 # 2048 zeroth codebook tokens
 
+  lookahead_padding_token: 153995  # used for text/audio cb0/pose cb0 pad slots when backbone.lookahead is an int
+
   pose_padding_token: 153999 # used if pose fps != audio fps
   pose_tokens_start: 154000 # first pose token
   pose_tokens_end: 155023 # 1024 zeroth codebook tokens
@@ -62,7 +64,7 @@ backbone:
   hidden_size: 2560
   use_reference_pose: true
 
-  lookahead: none # TODO
+  lookahead: null  # null -> opportunistic shift_left in collator; int K -> K-frame audio/pose pad-shift
 
 
 audio_depth_model:
