@@ -23,7 +23,13 @@ prefix+text+audio0+audio_tail). Cost is ~2 backbone forwards + 2 depth passes
 per frame, no KV-cache.
 """
 
+import glob
 import os
+import re
+import shutil
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import torch
 import torch.nn.functional as F
@@ -37,7 +43,9 @@ from models.backbone_model import DEFAULT_BACKBONE_ARCH, EndToEndModel
 
 
 DATASET_DIR = "/mnt/somfs/pose_cond/merged_pose_audio_dataset/hf_pose_dataset_filtered"
-CHECKPOINT_PATH = "/home/edwin/pose-llm/outputs/checkpoint-1000"
+CHECKPOINTS_DIR = "/home/edwin/pose-llm/checkpoints"
+CHECKPOINT_NAME = "latest" # e.g. "checkpoint-33000" or "latest"
+INFERENCE_OUTPUTS_DIR = "/home/edwin/pose-llm/inference_outputs"
 
 NUM_GENERATE_SAMPLES = 4
 MAX_GENERATE_FRAMES = 256
@@ -59,6 +67,13 @@ AUDIO_CODEBOOK_SIZE = CONFIG["audio_depth_model"]["codebook_size"]
 POSE_CODEBOOK_SIZE = CONFIG["pose_depth_model"]["codebook_size"]
 AUDIO_TOKENS_START = SPECIAL_TOKEN_CONFIG["audio_tokens_start"]
 POSE_TOKENS_START = SPECIAL_TOKEN_CONFIG["pose_tokens_start"]
+
+
+# clear previous inference outputs ------------------------------------------
+if os.path.isdir(INFERENCE_OUTPUTS_DIR):
+    shutil.rmtree(INFERENCE_OUTPUTS_DIR)
+os.makedirs(INFERENCE_OUTPUTS_DIR, exist_ok=True)
+print(f"cleared {INFERENCE_OUTPUTS_DIR}")
 
 
 # data -----------------------------------------------------------------------
@@ -98,6 +113,17 @@ def _untie_word_embeddings(m):
 _untie_word_embeddings(model)
 _untie_word_embeddings(model.audio_depth_model)
 _untie_word_embeddings(model.pose_depth_model)
+
+if CHECKPOINT_NAME == "latest":
+    candidates = glob.glob(os.path.join(CHECKPOINTS_DIR, "checkpoint-*"))
+    if not candidates:
+        raise FileNotFoundError(f"no checkpoint-* dirs in {CHECKPOINTS_DIR}")
+    CHECKPOINT_PATH = max(
+        candidates, key=lambda p: int(re.search(r"checkpoint-(\d+)", p).group(1))
+    )
+    print(f"resolved latest checkpoint: {CHECKPOINT_PATH}")
+else:
+    CHECKPOINT_PATH = os.path.join(CHECKPOINTS_DIR, CHECKPOINT_NAME)
 
 state_dict = load_file(os.path.join(CHECKPOINT_PATH, "model.safetensors"))
 missing, unexpected = model.load_state_dict(state_dict, strict=False)
@@ -328,6 +354,12 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
     audio_codes = torch.tensor(audio_history, dtype=torch.long).T.contiguous()  # (AUDIO_DEPTH, N)
     pose_codes = torch.tensor(pose_history, dtype=torch.long).T.contiguous()    # (POSE_DEPTH, N)
     generated.append({"audio_codes": audio_codes, "pose_codes": pose_codes})
+
+    audio_path = os.path.join(INFERENCE_OUTPUTS_DIR, f"audio_{sample_idx}.pt")
+    pose_path = os.path.join(INFERENCE_OUTPUTS_DIR, f"pose_{sample_idx}.pt")
+    torch.save(audio_codes, audio_path)
+    torch.save(pose_codes, pose_path)
+    print(f"  saved {audio_path} and {pose_path}")
     print(
         f"  done. audio_codes={tuple(audio_codes.shape)} pose_codes={tuple(pose_codes.shape)}"
     )

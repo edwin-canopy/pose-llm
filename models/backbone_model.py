@@ -69,6 +69,7 @@ class EndToEndModel(Qwen3ForCausalLM):
 
         # backbone-side embedding tables for the summed codebook tail
         # (one slot per (codebook, code) pair, matches collator's per-codebook offsets)
+        # NOTE weights for the zeroth codebooks here are never used, as we use the LLM's input embedding
         self.audio_embedding = nn.Embedding(
             self.audio_depth * self.audio_codebook_size, self.hidden_size
         )
@@ -282,6 +283,11 @@ class EndToEndModel(Qwen3ForCausalLM):
         pose_depth_loss = pose_depth_outputs.loss
 
         loss = (1 - self.alpha_audio - self.alpha_pose) * backbone_loss + self.alpha_audio * audio_depth_loss + self.alpha_pose * pose_depth_loss
-        return {"loss": loss}
+        return {
+            "loss": loss,
+            "backbone_loss": backbone_loss.detach(),
+            "audio_depth_loss": audio_depth_loss.detach(),
+            "pose_depth_loss": pose_depth_loss.detach(),
+        }
 
     

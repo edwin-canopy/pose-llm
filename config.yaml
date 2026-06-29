@@ -15,7 +15,7 @@ training:
   eval_rows: 10000
   target_frames: 3000             # per-rank token budget for length-packed batches; set equal to max_sequence_length so every step is the same shape across ranks (no FSDP straggler bubble)
   max_sequence_length: 3000       # hard cap on post-concat sequence length; longer sequences are truncated
-  keep_checkpoints: 3             # HF Trainer keeps at most this many checkpoint-* dirs; older ones get deleted on each save
+  keep_checkpoints: 2             # HF Trainer keeps at most this many checkpoint-* dirs; older ones get deleted on each save
   logging_steps: 1                # how often to flush loss/lr/grad_norm to wandb (HF Trainer default is 500, way too sparse)
   bf16: true
   gradient_checkpointing: false   # use fsdp_config.activation_checkpointing instead

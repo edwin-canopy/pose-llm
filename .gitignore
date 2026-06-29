@@ -6,5 +6,6 @@ uv.lock
 *.pth
 *.pt
 *.bin
-outputs/
+inference_outputs/
+checkpoints/
 wandb/

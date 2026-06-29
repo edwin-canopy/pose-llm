@@ -137,7 +137,7 @@ collator = PoseSpeechMonoCollator(tokenizer, CONFIG)
 # trainer --------------------------------------------------------------------
 gpu_minibatch_size = TRAINING_CONFIG["gpu_minibatch_size"]
 args = TrainingArguments(
-    output_dir="outputs",
+    output_dir="checkpoints",
     remove_unused_columns=False,
     per_device_train_batch_size=gpu_minibatch_size,
     per_device_eval_batch_size=gpu_minibatch_size,
@@ -155,6 +155,31 @@ args = TrainingArguments(
 )
 
 class LengthPackedTrainer(Trainer):
+    _extra_loss_keys = ("backbone_loss", "audio_depth_loss", "pose_depth_loss")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._extra_loss_sums = {k: 0.0 for k in self._extra_loss_keys}
+        self._extra_loss_count = 0
+
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        loss, outputs = super().compute_loss(model, inputs, return_outputs=True, **kwargs)
+        for k in self._extra_loss_keys:
+            v = outputs.get(k) if hasattr(outputs, "get") else getattr(outputs, k, None)
+            if v is not None:
+                self._extra_loss_sums[k] += v.detach().float().item()
+        self._extra_loss_count += 1
+        return (loss, outputs) if return_outputs else loss
+
+    def log(self, logs, *args, **kwargs):
+        if self._extra_loss_count > 0 and "loss" in logs:
+            n = self._extra_loss_count
+            for k in self._extra_loss_keys:
+                logs[k] = self._extra_loss_sums[k] / n
+                self._extra_loss_sums[k] = 0.0
+            self._extra_loss_count = 0
+        return super().log(logs, *args, **kwargs)
+
     # Override get_train_dataloader to use LengthBudgetBatchSampler. Bypasses
     # accelerator.prepare so accelerate doesn't wrap our already-rank-aware
     # batch_sampler in BatchSamplerShard (which would re-shard and corrupt the
