@@ -6,5 +6,7 @@
 
 ## Running inference
 * Scripts under `inference/`, use `inference/decode_{pose/audio}.py` to convert generated samples in `inference_outputs` to audio and pose video (normalised and centered).
+* Use correct pose tokenizer, by default we are working with `pose_tokenizer_xabi/`.
+* Use `inference/comparisons.py` to plot comparison plots.
 
 Note that each new infernce run wipes the outputs folder and re-writes its outputs to it.
