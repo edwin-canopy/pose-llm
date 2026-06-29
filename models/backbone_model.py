@@ -81,6 +81,7 @@ class EndToEndModel(Qwen3ForCausalLM):
         self.alpha_pose = config["alpha_pose"]
         self.audio_model_train_split = audio_cfg["training_split"]
         self.pose_model_train_split = pose_cfg["training_split"]
+        self.use_reference_pose = backbone_cfg["use_reference_pose"]
 
         # self.logmel_projection = Swiglu(
         #
@@ -219,6 +220,15 @@ class EndToEndModel(Qwen3ForCausalLM):
         labels[separator_mask] = -100
         labels = labels.flatten(1, 2)  # (b, s, p) -> (b, s*p)
 
+        if self.use_reference_pose:
+            # full first-frame pose latent (cb0 via LLM vocab + summed cb1..N via pose_embedding)
+            ref_cb0_pose_embed = self.get_input_embeddings()(backbone_ids[:, 0, 2])
+            ref_tail_pose_embeds = self.pose_embedding(pose_depth_ids[:, 0, 1:]).sum(dim=1)
+            ref_pose_embed = (ref_cb0_pose_embed + ref_tail_pose_embeds).unsqueeze(1)
+            interleaved_embeds = torch.cat([ref_pose_embed, interleaved_embeds], dim=1)
+            ref_label = torch.full((labels.size(0), 1), -100, dtype=labels.dtype, device=labels.device)
+            labels = torch.cat([ref_label, labels], dim=1)
+
         backbone_outputs = super().forward(
             inputs_embeds=interleaved_embeds,
             labels=labels,
@@ -230,7 +240,8 @@ class EndToEndModel(Qwen3ForCausalLM):
         backbone_loss = backbone_outputs.loss
         backbone_hidden_states = backbone_outputs.hidden_states[-1]
 
-        text_hidden_states = backbone_hidden_states[:, 0::3][not_separator_mask]
+        text_stride_offset = 1 if self.use_reference_pose else 0
+        text_hidden_states = backbone_hidden_states[:, text_stride_offset::3][not_separator_mask]
 
 
         # audio depth pass --------------

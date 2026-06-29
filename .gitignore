@@ -6,6 +6,8 @@ uv.lock
 *.pth
 *.pt
 *.bin
+*.gif
+*.mp3
 inference_outputs/
 checkpoints/
 wandb/

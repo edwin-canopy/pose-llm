@@ -60,6 +60,7 @@ alpha_pose: 0.1
 backbone:
   weights_path: null   # if set, load pretrained weights from here; architecture is fixed (see DEFAULT_BACKBONE_ARCH)
   hidden_size: 2560
+  use_reference_pose: true
 
   lookahead: none # TODO
 
