@@ -67,6 +67,7 @@ AUDIO_CODEBOOK_SIZE = CONFIG["audio_depth_model"]["codebook_size"]
 POSE_CODEBOOK_SIZE = CONFIG["pose_depth_model"]["codebook_size"]
 AUDIO_TOKENS_START = SPECIAL_TOKEN_CONFIG["audio_tokens_start"]
 POSE_TOKENS_START = SPECIAL_TOKEN_CONFIG["pose_tokens_start"]
+USE_REFERENCE_POSE = CONFIG["backbone"]["use_reference_pose"]
 
 
 # clear previous inference outputs ------------------------------------------
@@ -207,9 +208,21 @@ def _build_backbone_input(text_frames, audio_frames, pose_frames):
     return backbone_ids, audio_depth_ids, pose_depth_ids, separator_mask
 
 
-def _backbone_forward(model, backbone_ids, audio_depth_ids, pose_depth_ids, separator_mask):
+def _backbone_forward(
+    model,
+    backbone_ids,
+    audio_depth_ids,
+    pose_depth_ids,
+    separator_mask,
+    reference_pose_embed=None,
+):
     """Mirror EndToEndModel.forward_speech_pose's embedding build, then call
-    the bare Qwen3 forward so we get logits + hidden states without losses."""
+    the bare Qwen3 forward so we get logits + hidden states without losses.
+
+    If reference_pose_embed is provided (shape (1, 1, hidden)), it is concatenated
+    at the front of the interleaved sequence, matching the use_reference_pose
+    branch of forward_speech_pose (backbone_model.py:236-243).
+    """
     not_separator_mask = ~separator_mask
 
     llm_embeddings = model.get_input_embeddings()(backbone_ids)
@@ -230,12 +243,43 @@ def _backbone_forward(model, backbone_ids, audio_depth_ids, pose_depth_ids, sepa
     backbone_embeds = torch.stack([text_embeds, audio_embeds, pose_embeds], dim=2)
     interleaved_embeds = backbone_embeds.flatten(1, 2)  # (1, S*3, h)
 
+    if reference_pose_embed is not None:
+        interleaved_embeds = torch.cat([reference_pose_embed, interleaved_embeds], dim=1)
+
     return Qwen3ForCausalLM.forward(
         model,
         inputs_embeds=interleaved_embeds,
         output_hidden_states=True,
         use_cache=False,
     )
+
+
+def _build_reference_pose_embed(model, sample):
+    """Frame-0 full pose latent for prepending, identical in form to
+    EndToEndModel.forward_speech_pose's reference-pose construction
+    (backbone_model.py:236-243).
+
+    cb0 token (offset by POSE_TOKENS_START so it indexes the extended LLM vocab)
+    is embedded via the backbone's input embedding; cb1..cb{POSE_DEPTH-1} (offset
+    by d * POSE_CODEBOOK_SIZE) are embedded via model.pose_embedding and summed
+    across the depth axis. The two are added to form one hidden-size vector,
+    returned with shape (1, 1, hidden) ready to concat at the start of the
+    interleaved sequence. Uses the GT first-frame pose from the eval sample,
+    matching the training distribution.
+    """
+    pose_flat = torch.tensor(sample["pose_tokens"], dtype=torch.long)
+    pose = pose_flat.view(-1, POSE_DEPTH).T.contiguous()  # (POSE_DEPTH, T)
+
+    cb0_id = torch.tensor(
+        [pose[0, 0].item() + POSE_TOKENS_START], dtype=torch.long, device=DEVICE
+    )
+    cb0_embed = model.get_input_embeddings()(cb0_id)  # (1, h)
+
+    tail_offsets = torch.arange(1, POSE_DEPTH, device=DEVICE) * POSE_CODEBOOK_SIZE
+    tail_ids = pose[1:, 0].to(DEVICE) + tail_offsets  # (POSE_DEPTH-1,)
+    tail_embed = model.pose_embedding(tail_ids).sum(dim=0, keepdim=True)  # (1, h)
+
+    return (cb0_embed + tail_embed).unsqueeze(0)  # (1, 1, h)
 
 
 def _generate_depth_codes(depth_model, projection, text_hidden, code0, depth, codebook_size):
@@ -286,6 +330,11 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
 
     print(f"\nsample {sample_idx}: {num_frames} frames to generate")
     with torch.inference_mode():
+        reference_pose_embed = (
+            _build_reference_pose_embed(model, sample) if USE_REFERENCE_POSE else None
+        )
+        text_stride_offset = 1 if USE_REFERENCE_POSE else 0
+
         for k in range(num_frames):
             # extend with dummies for the current frame; real codes overwrite below
             audio_history.append([0] * AUDIO_DEPTH)
@@ -296,10 +345,11 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
                 text_track[: k + 1], audio_history, pose_history
             )
             outputs = _backbone_forward(
-                model, backbone_ids, audio_depth_ids, pose_depth_ids, separator_mask
+                model, backbone_ids, audio_depth_ids, pose_depth_ids, separator_mask,
+                reference_pose_embed=reference_pose_embed,
             )
 
-            text_position = 3 * k
+            text_position = 3 * k + text_stride_offset
             audio0_logits = outputs.logits[
                 0, text_position, AUDIO_TOKENS_START : AUDIO_TOKENS_START + AUDIO_CODEBOOK_SIZE
             ]
@@ -325,10 +375,11 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
                 text_track[: k + 1], audio_history, pose_history
             )
             outputs = _backbone_forward(
-                model, backbone_ids, audio_depth_ids, pose_depth_ids, separator_mask
+                model, backbone_ids, audio_depth_ids, pose_depth_ids, separator_mask,
+                reference_pose_embed=reference_pose_embed,
             )
 
-            audio_position = 3 * k + 1
+            audio_position = 3 * k + 1 + text_stride_offset
             pose0_logits = outputs.logits[
                 0, audio_position, POSE_TOKENS_START : POSE_TOKENS_START + POSE_CODEBOOK_SIZE
             ]
