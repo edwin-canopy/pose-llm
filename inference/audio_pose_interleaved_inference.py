@@ -42,6 +42,9 @@ from collators import PoseSpeechMonoCollator
 from models.backbone_model import DEFAULT_BACKBONE_ARCH, EndToEndModel
 
 
+DISABLE_AUDIO_DEPTH_MODEL = False
+DISABLE_POSE_DEPTH_MODEL = False
+
 DATASET_DIR = "/mnt/somfs/pose_cond/merged_pose_audio_dataset/hf_pose_dataset_filtered"
 CHECKPOINTS_DIR = "/home/edwin/pose-llm/checkpoints"
 CHECKPOINT_NAME = "latest" # e.g. "checkpoint-33000" or "latest"
@@ -359,14 +362,17 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
             text_hidden = outputs.hidden_states[-1][:, text_position, :]
 
             # --- audio depth pass ---
-            audio_tail = _generate_depth_codes(
-                model.audio_depth_model,
-                model.audio_projection,
-                text_hidden,
-                audio0,
-                AUDIO_DEPTH,
-                AUDIO_CODEBOOK_SIZE,
-            )
+            if DISABLE_AUDIO_DEPTH_MODEL:
+                audio_tail = [0] * (AUDIO_DEPTH - 1)
+            else:
+                audio_tail = _generate_depth_codes(
+                    model.audio_depth_model,
+                    model.audio_projection,
+                    text_hidden,
+                    audio0,
+                    AUDIO_DEPTH,
+                    AUDIO_CODEBOOK_SIZE,
+                )
             audio_history[k] = [audio0] + audio_tail
 
             # --- forward 2: predict pose0_k from audio-position logit ---
@@ -386,14 +392,17 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
             pose0 = _sample(pose0_logits, DO_SAMPLE, TEMPERATURE, TOP_P)
 
             # --- pose depth pass ---
-            pose_tail = _generate_depth_codes(
-                model.pose_depth_model,
-                model.pose_projection,
-                text_hidden,
-                pose0,
-                POSE_DEPTH,
-                POSE_CODEBOOK_SIZE,
-            )
+            if DISABLE_POSE_DEPTH_MODEL:
+                pose_tail = [0] * (POSE_DEPTH - 1)
+            else:
+                pose_tail = _generate_depth_codes(
+                    model.pose_depth_model,
+                    model.pose_projection,
+                    text_hidden,
+                    pose0,
+                    POSE_DEPTH,
+                    POSE_CODEBOOK_SIZE,
+                )
             pose_history[k] = [pose0] + pose_tail
 
             if (k + 1) % 16 == 0 or k == num_frames - 1:
