@@ -44,6 +44,7 @@ from models.backbone_model import DEFAULT_BACKBONE_ARCH, EndToEndModel
 
 DISABLE_AUDIO_DEPTH_MODEL = False
 DISABLE_POSE_DEPTH_MODEL = False
+TEACHER_FORCE_TEXT = True
 
 DATASET_DIR = "/mnt/somfs/pose_cond/merged_pose_audio_dataset/hf_pose_dataset_filtered"
 CHECKPOINTS_DIR = "/home/edwin/pose-llm/checkpoints"
@@ -70,6 +71,8 @@ AUDIO_CODEBOOK_SIZE = CONFIG["audio_depth_model"]["codebook_size"]
 POSE_CODEBOOK_SIZE = CONFIG["pose_depth_model"]["codebook_size"]
 AUDIO_TOKENS_START = SPECIAL_TOKEN_CONFIG["audio_tokens_start"]
 POSE_TOKENS_START = SPECIAL_TOKEN_CONFIG["pose_tokens_start"]
+WORD_PAD_TOKEN = SPECIAL_TOKEN_CONFIG["word_pad"]
+NEW_WORD_TOKEN = SPECIAL_TOKEN_CONFIG["new_word"]
 USE_REFERENCE_POSE = CONFIG["backbone"]["use_reference_pose"]
 
 
@@ -331,6 +334,23 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
     audio_history = []   # list[list[int]] of length k, each row has AUDIO_DEPTH raw codes
     pose_history = []    # list[list[int]] of length k, each row has POSE_DEPTH raw codes
 
+    # text source for this sample. When teacher-forcing, we use the full GT text
+    # track. Otherwise we seed with the first actual text token from the GT
+    # (skipping word_pad and new_word markers) and let the backbone extend the
+    # track autoregressively, one token per frame.
+    if TEACHER_FORCE_TEXT:
+        used_text_track = list(text_track)
+    else:
+        seed_idx = next(
+            (
+                i
+                for i, t in enumerate(text_track)
+                if t not in (WORD_PAD_TOKEN, NEW_WORD_TOKEN)
+            ),
+            0,
+        )
+        used_text_track = [text_track[seed_idx]]
+
     print(f"\nsample {sample_idx}: {num_frames} frames to generate")
     with torch.inference_mode():
         reference_pose_embed = (
@@ -345,7 +365,7 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
 
             # --- forward 1: predict audio0_k from text-position logit ---
             backbone_ids, audio_depth_ids, pose_depth_ids, separator_mask = _build_backbone_input(
-                text_track[: k + 1], audio_history, pose_history
+                used_text_track[: k + 1], audio_history, pose_history
             )
             outputs = _backbone_forward(
                 model, backbone_ids, audio_depth_ids, pose_depth_ids, separator_mask,
@@ -378,7 +398,7 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
             # --- forward 2: predict pose0_k from audio-position logit ---
             # audio0 + audio tail are now real in the history; pose still dummy
             backbone_ids, audio_depth_ids, pose_depth_ids, separator_mask = _build_backbone_input(
-                text_track[: k + 1], audio_history, pose_history
+                used_text_track[: k + 1], audio_history, pose_history
             )
             outputs = _backbone_forward(
                 model, backbone_ids, audio_depth_ids, pose_depth_ids, separator_mask,
@@ -404,6 +424,26 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
                     POSE_CODEBOOK_SIZE,
                 )
             pose_history[k] = [pose0] + pose_tail
+
+            # --- forward 3: predict text_{k+1} from pose-position logit ---
+            # Required only when we are not teacher-forcing the text track and
+            # there is a next frame to seed. Uses real pose0_k in the input
+            # (mirrors training-time conditioning: text_{k+1} | prefix+text_k+
+            # audio0_k+pose0_k). Restricted to the text-vocab slice [0,
+            # AUDIO_TOKENS_START), the symmetric move to how audio0/pose0 are
+            # sampled from their respective codebook slices only.
+            if not TEACHER_FORCE_TEXT and k + 1 < num_frames:
+                backbone_ids, audio_depth_ids, pose_depth_ids, separator_mask = _build_backbone_input(
+                    used_text_track[: k + 1], audio_history, pose_history
+                )
+                outputs = _backbone_forward(
+                    model, backbone_ids, audio_depth_ids, pose_depth_ids, separator_mask,
+                    reference_pose_embed=reference_pose_embed,
+                )
+                pose_position = 3 * k + 2 + text_stride_offset
+                text_logits = outputs.logits[0, pose_position, :AUDIO_TOKENS_START]
+                next_text = _sample(text_logits, DO_SAMPLE, TEMPERATURE, TOP_P)
+                used_text_track.append(next_text)
 
             if (k + 1) % 16 == 0 or k == num_frames - 1:
                 print(
