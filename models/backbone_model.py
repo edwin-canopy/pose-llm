@@ -4,6 +4,7 @@ Uses Qwen 3-4B for backbone LLM
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import (
     AutoConfig,
     LlamaForCausalLM,
@@ -255,6 +256,30 @@ class EndToEndModel(Qwen3ForCausalLM):
         text_stride_offset = 1 if self.use_reference_pose else 0
         text_hidden_per_frame = backbone_hidden_states[:, text_stride_offset::3]
 
+        # per-column backbone losses (text / audio cb0 / pose cb0) for logging only.
+        # outputs.logits is materialized when fused_linear_cross_entropy is off.
+        with torch.no_grad():
+            logits = backbone_outputs.logits
+            shift_logits = logits[:, :-1, :]
+            shift_labels = labels[:, 1:]
+            S_flat = labels.size(1)
+            positions = torch.arange(S_flat, device=labels.device)
+            adj = positions - text_stride_offset
+            valid = positions >= text_stride_offset
+            is_text_col = valid & (adj % 3 == 0)
+            is_audio_col = valid & (adj % 3 == 1)
+            is_pose_col = valid & (adj % 3 == 2)
+
+            def _col_ce(col_mask):
+                m = col_mask[1:]  # align with shift positions
+                sel_logits = shift_logits[:, m, :].reshape(-1, shift_logits.size(-1))
+                sel_labels = shift_labels[:, m].reshape(-1)
+                return F.cross_entropy(sel_logits, sel_labels, ignore_index=-100)
+
+            text_backbone_loss = _col_ce(is_text_col)
+            audio_backbone_loss = _col_ce(is_audio_col)
+            pose_backbone_loss = _col_ce(is_pose_col)
+
 
         # audio depth pass --------------
 
@@ -309,6 +334,9 @@ class EndToEndModel(Qwen3ForCausalLM):
         return {
             "loss": loss,
             "backbone_loss": backbone_loss.detach(),
+            "text_backbone_loss": text_backbone_loss,
+            "audio_backbone_loss": audio_backbone_loss,
+            "pose_backbone_loss": pose_backbone_loss,
             "audio_depth_loss": audio_depth_loss.detach(),
             "pose_depth_loss": pose_depth_loss.detach(),
         }

@@ -155,7 +155,14 @@ args = TrainingArguments(
 )
 
 class LengthPackedTrainer(Trainer):
-    _extra_loss_keys = ("backbone_loss", "audio_depth_loss", "pose_depth_loss")
+    _extra_loss_keys = (
+        "backbone_loss",
+        "text_backbone_loss",
+        "audio_backbone_loss",
+        "pose_backbone_loss",
+        "audio_depth_loss",
+        "pose_depth_loss",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

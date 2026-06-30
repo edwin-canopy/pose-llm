@@ -3,6 +3,7 @@
 # the weights. `n_codebooks` is the only field that overrides the checkpoint's
 # baked-in config; everything else comes from the checkpoint's config.json.
 
+# note xabi tokenizer used in pose somfs dataset
 package: xabi              # "james" or "xabi"
 james_path: "/mnt/somfs/james-checkpoints/pose-tokenizer-james/cb_size_2048/base-causal-2x-wide-16cb-qd0.5-lr1e-4-lossshift1-root-frame-0-cb_size_2048/step_200000"
 xabi_path: "/mnt/somfs/xabi-checkpoints/pose-tokenizer-2x-12cb-lossshift1"   # HF repo id or local dir

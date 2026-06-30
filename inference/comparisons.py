@@ -9,11 +9,11 @@ shorter ones freeze on their last frame until the longest finishes.
 If ``DO_RANDOM`` is True, a third panel is rendered per index: random codes
 sampled uniformly in [0, codebook_size) for each of the active codebooks and
 each token-rate timestep (matching pose_n.pt's token length), then passed
-through the same PoseTokenizer specified in tokenizer_config.yaml.
+through the same xabi PoseTokenizer used by decode_pose.py. All pose rendering
+delegates to decode_pose so there's exactly one rendering implementation.
 """
 
 import glob
-import importlib
 import os
 import re
 import sys
@@ -30,9 +30,6 @@ CFG = yaml.safe_load(open(CONFIG_PATH))
 
 INFERENCE_OUTPUTS_DIR = CFG["inference_outputs_dir"]
 GIF_FPS = CFG["gif"]["fps"]
-GIF_CANVAS = CFG["gif"]["canvas"]
-GIF_DOT_RADIUS = CFG["gif"]["dot_radius"]
-GIF_PADDING = CFG["gif"]["padding"]
 
 LABEL_H = 28
 LABEL_FONT_SIZE = 18
@@ -100,23 +97,19 @@ def _compose(panels: list[tuple[str, list[Image.Image]]]):
 if DO_RANDOM:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-    import numpy as np
     import torch
 
-    PACKAGE = CFG["package"]
-    if PACKAGE not in ("james", "xabi"):
-        raise ValueError(f"package must be 'james' or 'xabi', got {PACKAGE!r}")
-    WEIGHTS_PATH = CFG[f"{PACKAGE}_path"]
+    from pose_tokenizer_xabi import PoseTokenizer
+    from decode_pose import decoded_features_to_positions, render_pose_frames
+
+    WEIGHTS_PATH = CFG["xabi_path"]
     N_CODEBOOKS_OVERRIDE = CFG.get("n_codebooks")
 
     _device_cfg = CFG.get("device", "auto")
     DEVICE = ("cuda" if torch.cuda.is_available() else "cpu") if _device_cfg == "auto" else _device_cfg
 
-    pose_tokenizer_pkg = importlib.import_module(f"pose_tokenizer_{PACKAGE}")
-    PoseTokenizer = pose_tokenizer_pkg.PoseTokenizer
-
     tokenizer = PoseTokenizer.from_pretrained(WEIGHTS_PATH, device=DEVICE)
-    print(f"loaded PoseTokenizer ({PACKAGE}) from {WEIGHTS_PATH} on {DEVICE} "
+    print(f"loaded PoseTokenizer (xabi) from {WEIGHTS_PATH} on {DEVICE} "
           f"for random baseline")
 
     if N_CODEBOOKS_OVERRIDE is not None:
@@ -126,35 +119,8 @@ if DO_RANDOM:
         N_CODEBOOKS_OVERRIDE if N_CODEBOOKS_OVERRIDE is not None
         else tokenizer.config.n_codebooks
     )
-    CODEBOOK_SIZE = tokenizer.config.codebook_size  # read straight from the loaded weights' config
-    NUM_JOINTS = tokenizer.config.num_keypoints
-    JOINT_DIM = tokenizer.config.input_features // NUM_JOINTS
+    CODEBOOK_SIZE = tokenizer.config.codebook_size
     print(f"  random codes: ({ACTIVE_N_CODEBOOKS}, T_tokens) in [0, {CODEBOOK_SIZE})")
-
-    def _keypoints_to_frames(keypoints: np.ndarray) -> list[Image.Image]:
-        per_joint = keypoints.reshape(keypoints.shape[0], NUM_JOINTS, JOINT_DIM)
-        pts = per_joint[..., :2][..., ::-1]  # (y,x) -> (x,y)
-        x_min, y_min = pts[..., 0].min(), pts[..., 1].min()
-        x_max, y_max = pts[..., 0].max(), pts[..., 1].max()
-        span = max(x_max - x_min, y_max - y_min, 1e-6)
-        scale = (GIF_CANVAS - 2 * GIF_PADDING) / span
-        x_off = GIF_PADDING + ((GIF_CANVAS - 2 * GIF_PADDING) - (x_max - x_min) * scale) / 2
-        y_off = GIF_PADDING + ((GIF_CANVAS - 2 * GIF_PADDING) - (y_max - y_min) * scale) / 2
-
-        frames = []
-        for frame_pts in pts:
-            img = Image.new("RGB", (GIF_CANVAS, GIF_CANVAS), "white")
-            draw = ImageDraw.Draw(img)
-            for x, y in frame_pts:
-                px = (x - x_min) * scale + x_off
-                py = (y - y_min) * scale + y_off
-                draw.ellipse(
-                    (px - GIF_DOT_RADIUS, py - GIF_DOT_RADIUS,
-                     px + GIF_DOT_RADIUS, py + GIF_DOT_RADIUS),
-                    fill="black",
-                )
-            frames.append(img)
-        return frames
 
     @torch.inference_mode()
     def _random_frames(t_tokens: int) -> list[Image.Image]:
@@ -164,8 +130,9 @@ if DO_RANDOM:
             dtype=torch.long, device=DEVICE,
         )
         codes = list(codes_t.unbind(0))
-        keypoints = tokenizer.decode(codes).float().cpu().numpy()
-        return _keypoints_to_frames(keypoints)
+        recon = tokenizer.decode(codes)
+        positions = decoded_features_to_positions(recon)
+        return render_pose_frames(positions)
 
 
 # ---------------------------------------------------------------------------
@@ -174,10 +141,31 @@ if DO_RANDOM:
 
 eval_idx = _gif_indices("eval_pose")
 gen_idx = _gif_indices("pose")
+
+if not eval_idx and not gen_idx:
+    raise FileNotFoundError(
+        f"no eval_pose_*.gif or pose_*.gif found in {INFERENCE_OUTPUTS_DIR}. "
+        f"Run `python inference/eval_pose.py` and `python inference/decode_pose.py` "
+        f"first to produce the per-sample gifs that this script composes."
+    )
+if not eval_idx:
+    raise FileNotFoundError(
+        f"no eval_pose_*.gif in {INFERENCE_OUTPUTS_DIR}. "
+        f"Run `python inference/eval_pose.py` first."
+    )
+if not gen_idx:
+    raise FileNotFoundError(
+        f"no pose_*.gif in {INFERENCE_OUTPUTS_DIR}. "
+        f"Run `python inference/decode_pose.py` first."
+    )
+
 shared = sorted(eval_idx & gen_idx)
 if not shared:
     raise FileNotFoundError(
-        f"no matching pose_*.gif / eval_pose_*.gif pairs in {INFERENCE_OUTPUTS_DIR}"
+        f"found eval_pose_*.gif indices {sorted(eval_idx)} and pose_*.gif indices "
+        f"{sorted(gen_idx)} in {INFERENCE_OUTPUTS_DIR}, but no shared indices. "
+        f"Re-run inference/eval_pose.py and inference/decode_pose.py on the same "
+        f"sample range so their outputs align."
     )
 
 print(f"composing {len(shared)} comparison gifs at {GIF_FPS} fps: {shared}")

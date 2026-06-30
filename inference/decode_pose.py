@@ -1,18 +1,17 @@
-"""Decode generated pose code tensors back to keypoint features.
+"""Decode generated pose code tensors back to absolute xy joint positions.
 
 Reads every `pose_*.pt` file produced by audio_pose_interleaved_inference.py
 (shape (POSE_DEPTH, T), raw codebook indices), runs them through the trained
-PoseTokenizer specified in inference/tokenizer_config.yaml, and writes one
-`keypoints_<i>.pt` plus a sanity-check `pose_<i>.gif` per input.
+xabi PoseTokenizer, unfolds the resulting parent-relative offsets into joint
+positions (with root pinned to the origin and shoulder width = 1, since the
+generated tokens do not carry global_state), and writes one `keypoints_<i>.pt`
+of shape (T, 55, 2) in (y, x) plus a sanity-check `pose_<i>.gif` per input.
 
-Output tensor shape: (T, F) where F = config.input_features (e.g. 110 for
-55 joints x 2, or 165 for 55 joints x 3 with confidence). These are
-shoulder-width-normalised kinematic offsets; convert to (T, 55, 2) via
-<pkg>.data.rendering.kp_flat_to_positions if you also have a global_state.
+Other inference scripts (eval_pose.py, comparisons.py) import the rendering
+helpers from this module so all pose rendering goes through the same code path.
 """
 
 import glob
-import importlib
 import os
 import re
 import sys
@@ -24,19 +23,27 @@ import torch
 import yaml
 from PIL import Image, ImageDraw
 
+from pose_tokenizer_xabi import PoseTokenizer
+from pose_tokenizer_xabi.data.kinematic import (
+    NUM_JOINTS,
+    offsets_to_positions,
+    FACE_CONNECTIONS,
+    BODY_CONNECTIONS,
+    LEFT_HAND_CONNECTIONS,
+    RIGHT_HAND_CONNECTIONS,
+)
+
+
+_CONNECTIONS = (
+    FACE_CONNECTIONS
+    + BODY_CONNECTIONS
+    + LEFT_HAND_CONNECTIONS
+    + RIGHT_HAND_CONNECTIONS
+)
+
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "tokenizer_config.yaml")
 CFG = yaml.safe_load(open(CONFIG_PATH))
-
-PACKAGE = CFG["package"]
-if PACKAGE not in ("james", "xabi"):
-    raise ValueError(f"package must be 'james' or 'xabi', got {PACKAGE!r}")
-WEIGHTS_PATH = CFG[f"{PACKAGE}_path"]
-N_CODEBOOKS = CFG.get("n_codebooks")
-INFERENCE_OUTPUTS_DIR = CFG["inference_outputs_dir"]
-
-_device_cfg = CFG.get("device", "auto")
-DEVICE = ("cuda" if torch.cuda.is_available() else "cpu") if _device_cfg == "auto" else _device_cfg
 
 GIF_FPS = CFG["gif"]["fps"]
 GIF_CANVAS = CFG["gif"]["canvas"]
@@ -44,39 +51,32 @@ GIF_DOT_RADIUS = CFG["gif"]["dot_radius"]
 GIF_PADDING = CFG["gif"]["padding"]
 
 
-pose_tokenizer_pkg = importlib.import_module(f"pose_tokenizer_{PACKAGE}")
-PoseTokenizer = pose_tokenizer_pkg.PoseTokenizer
-
-tokenizer = PoseTokenizer.from_pretrained(WEIGHTS_PATH, device=DEVICE)
-print(f"loaded PoseTokenizer ({PACKAGE}) from {WEIGHTS_PATH} on {DEVICE}")
-print(f"  checkpoint n_codebooks={tokenizer.config.n_codebooks}, "
-      f"codebook_size={tokenizer.config.codebook_size}, "
-      f"input_features={tokenizer.config.input_features}")
-
-if N_CODEBOOKS is not None:
-    tokenizer.model.set_active_codebooks(N_CODEBOOKS)
-    print(f"  active n_codebooks overridden to {N_CODEBOOKS}")
-
-pose_files = sorted(
-    glob.glob(os.path.join(INFERENCE_OUTPUTS_DIR, "pose_*.pt")),
-    key=lambda p: int(re.search(r"pose_(\d+)\.pt$", p).group(1)),
-)
-if not pose_files:
-    raise FileNotFoundError(f"no pose_*.pt files in {INFERENCE_OUTPUTS_DIR}")
-
-print(f"found {len(pose_files)} pose tensors to decode")
-
-NUM_JOINTS = tokenizer.config.num_keypoints
-JOINT_DIM = tokenizer.config.input_features // NUM_JOINTS
+def decoded_features_to_positions(recon_features) -> np.ndarray:
+    """xabi-decoded (T, F) shoulder-width offsets -> (T, 55, 2) absolute joint
+    positions in (y, x), with root pinned to the origin and shoulder width = 1
+    (no global_state applied). F may be 55*2 = 110 (y, x only) or 55*3 = 165
+    (y, x, confidence); the confidence channel is dropped if present. Accepts
+    torch tensor or numpy array."""
+    if isinstance(recon_features, torch.Tensor):
+        recon_features = recon_features.float().cpu().numpy()
+    feat_dim = recon_features.shape[-1]
+    assert feat_dim % NUM_JOINTS == 0, (
+        f"feature dim {feat_dim} not divisible by NUM_JOINTS={NUM_JOINTS}"
+    )
+    joint_dim = feat_dim // NUM_JOINTS
+    assert joint_dim in (2, 3), (
+        f"unexpected joint dim {joint_dim}; expected 2 (y, x) or 3 (y, x, conf)"
+    )
+    offsets = recon_features.reshape(-1, NUM_JOINTS, joint_dim)[..., :2]
+    root = np.zeros((offsets.shape[0], 2), dtype=offsets.dtype)
+    return offsets_to_positions(root, offsets)
 
 
-def _render_gif(keypoints: np.ndarray, out_path: str) -> None:
-    """keypoints: (T, F=NUM_JOINTS*JOINT_DIM) per-joint [y, x, (conf)]; plot xy
-    offsets as black dots on a white canvas (no kinematic chain — these are
-    parent-relative offsets, not absolute positions)."""
-    per_joint = keypoints.reshape(keypoints.shape[0], NUM_JOINTS, JOINT_DIM)
-    # Layout is (y, x, [conf]); swap to (x, y) for image-space drawing.
-    pts = per_joint[..., :2][..., ::-1]
+def render_pose_frames(positions: np.ndarray) -> list[Image.Image]:
+    """(T, 55, 2) positions in (y, x) -> list of PIL skeleton frames (lines +
+    dots) on a white canvas. Min/max-normalised across the whole clip so the
+    figure fits the canvas."""
+    pts = positions[..., ::-1]  # (y, x) -> (x, y) for image-space drawing
     x_min, y_min = pts[..., 0].min(), pts[..., 1].min()
     x_max, y_max = pts[..., 0].max(), pts[..., 1].max()
     span = max(x_max - x_min, y_max - y_min, 1e-6)
@@ -88,16 +88,23 @@ def _render_gif(keypoints: np.ndarray, out_path: str) -> None:
     for frame_pts in pts:
         img = Image.new("RGB", (GIF_CANVAS, GIF_CANVAS), "white")
         draw = ImageDraw.Draw(img)
-        for x, y in frame_pts:
-            px = (x - x_min) * scale + x_off
-            py = (y - y_min) * scale + y_off
+        px = (frame_pts[:, 0] - x_min) * scale + x_off
+        py = (frame_pts[:, 1] - y_min) * scale + y_off
+        for i, j in _CONNECTIONS:
+            draw.line((px[i], py[i], px[j], py[j]), fill="black", width=1)
+        for k in range(NUM_JOINTS):
             draw.ellipse(
-                (px - GIF_DOT_RADIUS, py - GIF_DOT_RADIUS,
-                 px + GIF_DOT_RADIUS, py + GIF_DOT_RADIUS),
+                (px[k] - GIF_DOT_RADIUS, py[k] - GIF_DOT_RADIUS,
+                 px[k] + GIF_DOT_RADIUS, py[k] + GIF_DOT_RADIUS),
                 fill="black",
             )
         frames.append(img)
+    return frames
 
+
+def render_pose_gif(positions: np.ndarray, out_path: str) -> None:
+    """Render skeleton frames from (T, 55, 2) positions and save as a GIF."""
+    frames = render_pose_frames(positions)
     frames[0].save(
         out_path,
         save_all=True,
@@ -107,25 +114,62 @@ def _render_gif(keypoints: np.ndarray, out_path: str) -> None:
     )
 
 
-EXPECTED_N_CODEBOOKS = (
-    N_CODEBOOKS if N_CODEBOOKS is not None else tokenizer.config.n_codebooks
-)
+def _main() -> None:
+    weights_path = CFG["xabi_path"]
+    n_codebooks_override = CFG.get("n_codebooks")
+    inference_outputs_dir = CFG["inference_outputs_dir"]
 
+    _device_cfg = CFG.get("device", "auto")
+    device = ("cuda" if torch.cuda.is_available() else "cpu") if _device_cfg == "auto" else _device_cfg
 
-for path in pose_files:
-    idx = int(re.search(r"pose_(\d+)\.pt$", path).group(1))
-    pose_codes = torch.load(path, map_location=DEVICE)  # (POSE_DEPTH, T)
-    assert pose_codes.shape[0] == EXPECTED_N_CODEBOOKS, (
-        f"{path} has {pose_codes.shape[0]} codebooks but config selects "
-        f"{EXPECTED_N_CODEBOOKS} (n_codebooks={N_CODEBOOKS!r}, "
-        f"checkpoint n_codebooks={tokenizer.config.n_codebooks})"
+    tokenizer = PoseTokenizer.from_pretrained(weights_path, device=device)
+    print(f"loaded PoseTokenizer (xabi) from {weights_path} on {device}")
+    print(f"  checkpoint n_codebooks={tokenizer.config.n_codebooks}, "
+          f"codebook_size={tokenizer.config.codebook_size}, "
+          f"input_features={tokenizer.config.input_features}")
+
+    assert tokenizer.config.input_features in (NUM_JOINTS * 2, NUM_JOINTS * 3), (
+        f"expected (T, {NUM_JOINTS * 2}) (y, x) or (T, {NUM_JOINTS * 3}) "
+        f"(y, x, conf) features; got input_features={tokenizer.config.input_features}"
     )
-    codes = list(pose_codes.long().unbind(0))           # list[(T,)] per codebook
-    keypoints = tokenizer.decode(codes)                 # (T, F)
 
-    out_path = os.path.join(INFERENCE_OUTPUTS_DIR, f"keypoints_{idx}.pt")
-    torch.save(keypoints.cpu(), out_path)
+    if n_codebooks_override is not None:
+        tokenizer.model.set_active_codebooks(n_codebooks_override)
+        print(f"  active n_codebooks overridden to {n_codebooks_override}")
 
-    gif_path = os.path.join(INFERENCE_OUTPUTS_DIR, f"pose_{idx}.gif")
-    _render_gif(keypoints.float().cpu().numpy(), gif_path)
-    print(f"  {path} -> {out_path}  shape={tuple(keypoints.shape)}  gif={gif_path}")
+    pose_files = sorted(
+        glob.glob(os.path.join(inference_outputs_dir, "pose_*.pt")),
+        key=lambda p: int(re.search(r"pose_(\d+)\.pt$", p).group(1)),
+    )
+    if not pose_files:
+        raise FileNotFoundError(f"no pose_*.pt files in {inference_outputs_dir}")
+
+    print(f"found {len(pose_files)} pose tensors to decode")
+
+    expected_n_codebooks = (
+        n_codebooks_override if n_codebooks_override is not None
+        else tokenizer.config.n_codebooks
+    )
+
+    for path in pose_files:
+        idx = int(re.search(r"pose_(\d+)\.pt$", path).group(1))
+        pose_codes = torch.load(path, map_location=device)  # (POSE_DEPTH, T)
+        assert pose_codes.shape[0] == expected_n_codebooks, (
+            f"{path} has {pose_codes.shape[0]} codebooks but config selects "
+            f"{expected_n_codebooks} (n_codebooks={n_codebooks_override!r}, "
+            f"checkpoint n_codebooks={tokenizer.config.n_codebooks})"
+        )
+        codes = list(pose_codes.long().unbind(0))           # list[(T,)] per codebook
+        recon_offsets = tokenizer.decode(codes)             # (T, 110)
+        positions = decoded_features_to_positions(recon_offsets)  # (T, 55, 2)
+
+        out_path = os.path.join(inference_outputs_dir, f"keypoints_{idx}.pt")
+        torch.save(torch.from_numpy(positions), out_path)
+
+        gif_path = os.path.join(inference_outputs_dir, f"pose_{idx}.gif")
+        render_pose_gif(positions, gif_path)
+        print(f"  {path} -> {out_path}  shape={positions.shape}  gif={gif_path}")
+
+
+if __name__ == "__main__":
+    _main()

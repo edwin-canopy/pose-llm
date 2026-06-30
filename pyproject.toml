@@ -13,6 +13,8 @@ dependencies = [
     "liger-kernel>=0.8.0",
     "wandb",
     "pillow>=12.2.0",
+    "opencv-python-headless>=4.13.0.92",
+    "matplotlib>=3.10.9",
 ]
 
 [tool.uv]
