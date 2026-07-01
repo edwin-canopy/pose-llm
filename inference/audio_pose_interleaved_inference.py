@@ -58,11 +58,12 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DTYPE = torch.bfloat16
 
 DO_SAMPLE = True
-TEMPERATURE = 0.7
-TOP_P = 0.9
+TEMPERATURE = 2
+TOP_P = None
+TOP_K = 20
 
 
-CONFIG = yaml.safe_load(open("config.yaml"))
+CONFIG = yaml.safe_load(open("/home/edwin/pose-llm/config.yaml"))
 TRAINING_CONFIG = CONFIG["training"]
 SPECIAL_TOKEN_CONFIG = CONFIG["special_tokens"]
 AUDIO_DEPTH = CONFIG["audio_depth_model"]["residual_depth"]
@@ -153,17 +154,22 @@ collator = PoseSpeechMonoCollator(tokenizer, CONFIG)
 
 
 # helpers --------------------------------------------------------------------
-def _sample(logits, do_sample, temperature, top_p):
+def _sample(logits, do_sample, temperature, top_p, top_k):
     """Sample one token id from a 1-D logits tensor over a single codebook."""
     if not do_sample or temperature == 0.0:
         return int(logits.argmax().item())
+    if top_p is not None and top_k is not None:
+        raise ValueError("top_p and top_k are mutually exclusive; set exactly one")
     logits = logits.float() / temperature
     probs = F.softmax(logits, dim=-1)
     sorted_probs, sorted_idx = torch.sort(probs, descending=True)
-    cumulative = torch.cumsum(sorted_probs, dim=-1)
-    keep = cumulative <= top_p
-    keep[0] = True
-    sorted_probs = sorted_probs * keep
+    if top_p is not None:
+        cumulative = torch.cumsum(sorted_probs, dim=-1)
+        keep = cumulative <= top_p
+        keep[0] = True
+        sorted_probs = sorted_probs * keep
+    elif top_k is not None:
+        sorted_probs[top_k:] = 0
     sorted_probs = sorted_probs / sorted_probs.sum()
     pick = torch.multinomial(sorted_probs, 1)
     return int(sorted_idx[pick].item())
@@ -310,7 +316,7 @@ def _generate_depth_codes(depth_model, projection, text_hidden, code0, depth, co
         out = depth_model(inputs_embeds=light_inputs)
         block_start = codebook * codebook_size
         block_logits = out.logits[0, -1, block_start : block_start + codebook_size]
-        sampled = _sample(block_logits, DO_SAMPLE, TEMPERATURE, TOP_P)
+        sampled = _sample(block_logits, DO_SAMPLE, TEMPERATURE, TOP_P, TOP_K)
         tail_codes.append(sampled)
         if codebook != depth - 1:
             depth_id = torch.tensor(
@@ -376,7 +382,7 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
             audio0_logits = outputs.logits[
                 0, text_position, AUDIO_TOKENS_START : AUDIO_TOKENS_START + AUDIO_CODEBOOK_SIZE
             ]
-            audio0 = _sample(audio0_logits, DO_SAMPLE, TEMPERATURE, TOP_P)
+            audio0 = _sample(audio0_logits, DO_SAMPLE, TEMPERATURE, TOP_P, TOP_K)
 
             # cache the text-position hidden state for both depth models
             text_hidden = outputs.hidden_states[-1][:, text_position, :]
@@ -409,7 +415,7 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
             pose0_logits = outputs.logits[
                 0, audio_position, POSE_TOKENS_START : POSE_TOKENS_START + POSE_CODEBOOK_SIZE
             ]
-            pose0 = _sample(pose0_logits, DO_SAMPLE, TEMPERATURE, TOP_P)
+            pose0 = _sample(pose0_logits, DO_SAMPLE, TEMPERATURE, TOP_P, TOP_K)
 
             # --- pose depth pass ---
             if DISABLE_POSE_DEPTH_MODEL:
@@ -442,7 +448,7 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
                 )
                 pose_position = 3 * k + 2 + text_stride_offset
                 text_logits = outputs.logits[0, pose_position, :AUDIO_TOKENS_START]
-                next_text = _sample(text_logits, DO_SAMPLE, TEMPERATURE, TOP_P)
+                next_text = _sample(text_logits, DO_SAMPLE, TEMPERATURE, TOP_P, TOP_K)
                 used_text_track.append(next_text)
 
             if (k + 1) % 16 == 0 or k == num_frames - 1:
