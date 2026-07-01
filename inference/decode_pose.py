@@ -102,14 +102,14 @@ def render_pose_frames(positions: np.ndarray) -> list[Image.Image]:
     return frames
 
 
-def render_pose_gif(positions: np.ndarray, out_path: str) -> None:
+def render_pose_gif(positions: np.ndarray, out_path: str, fps: float = GIF_FPS) -> None:
     """Render skeleton frames from (T, 55, 2) positions and save as a GIF."""
     frames = render_pose_frames(positions)
     frames[0].save(
         out_path,
         save_all=True,
         append_images=frames[1:],
-        duration=int(1000 / GIF_FPS),
+        duration=int(1000 / fps),
         loop=0,
     )
 

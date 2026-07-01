@@ -9,32 +9,39 @@ decode_pose so there's exactly one rendering implementation.
 """
 
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import numpy as np
 import torch
 import yaml
 from datasets import load_from_disk
 
-from pose_tokenizer_james import PoseTokenizer
+from pose_tokenizer_xabi import PoseTokenizer
+from pose_tokenizer_xabi.data.kinematic import SELECTED_INDICES
 from decode_pose import decoded_features_to_positions, render_pose_gif
 
 
 DATASET_DIR = "/mnt/somfs/pose_cond/merged_pose_audio_dataset/hf_pose_dataset_filtered"
+POSE_NPZ_DIR = "/mnt/somfs/pose_cond/pose_cond_npz"
 INFERENCE_OUTPUTS_DIR = "/home/edwin/pose-llm/inference_outputs"
-TOKENIZER_PATH = "/mnt/somfs/james-checkpoints/pose-tokenizer-james/cb_size_2048/base-causal-2x-wide-16cb-qd0.5-lr1e-4-lossshift1-root-frame-0-cb_size_2048/step_200000"
+TOKENIZER_PATH = "/mnt/somfs/xabi-checkpoints/pose-tokenizer-2x-12cb-lossshift1"
 
 CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config.yaml"))
 CONFIG = yaml.safe_load(open(CONFIG_PATH))
 POSE_DEPTH = CONFIG["pose_depth_model"]["residual_depth"]
 
-N_SAMPLES = 4
+GIF_FPS = 25
+N_SAMPLES = 10
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 tokenizer = PoseTokenizer.from_pretrained(TOKENIZER_PATH, device=DEVICE)
-print(f"loaded PoseTokenizer from {TOKENIZER_PATH} on {DEVICE}")
+tokenizer.model.set_active_codebooks(POSE_DEPTH)
+print(f"loaded PoseTokenizer from {TOKENIZER_PATH} on {DEVICE} "
+      f"(active_codebooks={POSE_DEPTH})")
 
 raw = load_from_disk(DATASET_DIR)
 eval_dataset = raw.select(range(N_SAMPLES))
@@ -52,8 +59,19 @@ for i in range(N_SAMPLES):
     positions = decoded_features_to_positions(recon)             # (T, 55, 2)
 
     gif_path = os.path.join(INFERENCE_OUTPUTS_DIR, f"eval_pose_{i}.gif")
-    render_pose_gif(positions, gif_path)
+    render_pose_gif(positions, gif_path, fps=GIF_FPS)
     print(
         f"  sample {i}: pose_codes={tuple(pose_codes.shape)} "
         f"positions={positions.shape} -> {gif_path}"
     )
+
+    clip_key = re.sub(r"_chunk_\d+$", "", sample["row_id"])
+    npz_path = os.path.join(POSE_NPZ_DIR, f"{clip_key}_poses.npz")
+    raw_poses = np.load(npz_path)["poses"]                 # (T, 133, 3) as (x, y, conf)
+    raw_xy = raw_poses[:, SELECTED_INDICES, :2]            # (T, 55, 2) in (x, y)
+    # Rotate 90° clockwise in image space: (x, y) -> (-y, x); render expects (y, x).
+    raw_yx = np.stack([raw_xy[..., 0], -raw_xy[..., 1]], axis=-1).copy()
+
+    original_gif_path = os.path.join(INFERENCE_OUTPUTS_DIR, f"eval_pose_{i}_original.gif")
+    render_pose_gif(raw_yx, original_gif_path, fps=GIF_FPS)
+    print(f"    original: raw_poses={raw_poses.shape} -> {original_gif_path}")
