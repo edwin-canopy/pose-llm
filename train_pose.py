@@ -139,6 +139,7 @@ gpu_minibatch_size = TRAINING_CONFIG["gpu_minibatch_size"]
 args = TrainingArguments(
     output_dir="checkpoints",
     remove_unused_columns=False,
+    learning_rate=TRAINING_CONFIG["lr"],
     per_device_train_batch_size=gpu_minibatch_size,
     per_device_eval_batch_size=gpu_minibatch_size,
     bf16=TRAINING_CONFIG["bf16"],

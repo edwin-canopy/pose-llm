@@ -78,8 +78,8 @@ class EndToEndModel(Qwen3ForCausalLM):
             self.pose_depth * self.pose_codebook_size, self.hidden_size
         )
 
-        self.alpha_audio = config["alpha_audio"]
-        self.alpha_pose = config["alpha_pose"]
+        self.alpha_audio = config["training"]["alpha_audio"]
+        self.alpha_pose = config["training"]["alpha_pose"]
         self.audio_model_train_split = audio_cfg["training_split"]
         self.pose_model_train_split = pose_cfg["training_split"]
         self.use_reference_pose = backbone_cfg["use_reference_pose"]

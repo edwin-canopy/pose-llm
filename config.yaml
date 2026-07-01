@@ -10,6 +10,7 @@ wandb:
 
 
 training:
+  lr: 5e-5
   seed: 47
   gpu_minibatch_size: 1
   eval_rows: 10000
@@ -37,6 +38,10 @@ training:
       - LlamaDecoderLayer
     use_orig_params: true
 
+  # depth loss scalers
+  alpha_audio: 0.1
+  alpha_pose: 0.1
+
 special_tokens:
   separator: 151936
   
@@ -52,11 +57,6 @@ special_tokens:
   pose_padding_token: 153999 # used if pose fps != audio fps
   pose_tokens_start: 154000 # first pose token
   pose_tokens_end: 155023 # 1024 zeroth codebook tokens
-
-
-# depth loss scalers
-alpha_audio: 0.1
-alpha_pose: 0.1
 
 
 backbone:
