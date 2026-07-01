@@ -14,7 +14,7 @@ inference_outputs_dir: "/home/edwin/pose-llm/inference_outputs"
 device: auto                # "auto" -> cuda if available else cpu
 
 gif:
-  fps: 2
+  fps: 25
   canvas: 512
   dot_radius: 3
   padding: 16

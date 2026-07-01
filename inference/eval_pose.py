@@ -33,8 +33,11 @@ CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "con
 CONFIG = yaml.safe_load(open(CONFIG_PATH))
 POSE_DEPTH = CONFIG["pose_depth_model"]["residual_depth"]
 
-GIF_FPS = 25
-N_SAMPLES = 10
+TOKENIZER_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "tokenizer_config.yaml")
+TOKENIZER_CFG = yaml.safe_load(open(TOKENIZER_CONFIG_PATH))
+GIF_FPS = TOKENIZER_CFG["gif"]["fps"]
+
+N_SAMPLES = 4
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
