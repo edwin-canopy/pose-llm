@@ -99,17 +99,18 @@ if DO_RANDOM:
 
     import torch
 
+    from paths import JAMES_TOKENIZER_PATH, XABI_TOKENIZER_PATH
     from pose_tokenizer_xabi import PoseTokenizer
     from decode_pose import decoded_features_to_positions, render_pose_frames
 
-    WEIGHTS_PATH = CFG["xabi_path"]
+    WEIGHTS_PATH = {"xabi": XABI_TOKENIZER_PATH, "james": JAMES_TOKENIZER_PATH}[CFG["package"]]
     N_CODEBOOKS_OVERRIDE = CFG.get("n_codebooks")
 
     _device_cfg = CFG.get("device", "auto")
     DEVICE = ("cuda" if torch.cuda.is_available() else "cpu") if _device_cfg == "auto" else _device_cfg
 
     tokenizer = PoseTokenizer.from_pretrained(WEIGHTS_PATH, device=DEVICE)
-    print(f"loaded PoseTokenizer (xabi) from {WEIGHTS_PATH} on {DEVICE} "
+    print(f"loaded PoseTokenizer ({CFG['package']}) from {WEIGHTS_PATH} on {DEVICE} "
           f"for random baseline")
 
     if N_CODEBOOKS_OVERRIDE is not None:

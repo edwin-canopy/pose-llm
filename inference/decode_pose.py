@@ -23,6 +23,7 @@ import torch
 import yaml
 from PIL import Image, ImageDraw
 
+from paths import JAMES_TOKENIZER_PATH, XABI_TOKENIZER_PATH
 from pose_tokenizer_xabi import PoseTokenizer
 from pose_tokenizer_xabi.data.kinematic import (
     NUM_JOINTS,
@@ -32,6 +33,12 @@ from pose_tokenizer_xabi.data.kinematic import (
     LEFT_HAND_CONNECTIONS,
     RIGHT_HAND_CONNECTIONS,
 )
+
+
+_TOKENIZER_WEIGHTS = {
+    "xabi": XABI_TOKENIZER_PATH,
+    "james": JAMES_TOKENIZER_PATH,
+}
 
 
 _CONNECTIONS = (
@@ -115,7 +122,7 @@ def render_pose_gif(positions: np.ndarray, out_path: str, fps: float = GIF_FPS) 
 
 
 def _main() -> None:
-    weights_path = CFG["xabi_path"]
+    weights_path = _TOKENIZER_WEIGHTS[CFG["package"]]
     n_codebooks_override = CFG.get("n_codebooks")
     inference_outputs_dir = CFG["inference_outputs_dir"]
 
@@ -123,7 +130,7 @@ def _main() -> None:
     device = ("cuda" if torch.cuda.is_available() else "cpu") if _device_cfg == "auto" else _device_cfg
 
     tokenizer = PoseTokenizer.from_pretrained(weights_path, device=device)
-    print(f"loaded PoseTokenizer (xabi) from {weights_path} on {device}")
+    print(f"loaded PoseTokenizer ({CFG['package']}) from {weights_path} on {device}")
     print(f"  checkpoint n_codebooks={tokenizer.config.n_codebooks}, "
           f"codebook_size={tokenizer.config.codebook_size}, "
           f"input_features={tokenizer.config.input_features}")

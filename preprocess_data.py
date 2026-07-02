@@ -6,7 +6,7 @@ chunk with:
   audio_tokens: list[list[int32]]   (mimi codes, [NUM_AUDIO_CODEBOOKS x num_frames])
   pose_tokens:  list[int32]         (pose input_ids, pose-only / rescaled)
 
-Sources (from config.yaml): pose parquet (input_ids) inner-joined on row_id
+Sources (from dir.toml): pose parquet (input_ids) inner-joined on row_id
 with the audio parquets (mimi_codes + per-word transcription).
 
 We iterate one audio parquet at a time and `pose.take(...)` the matching
@@ -34,7 +34,8 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.dataset as pads
 import pyarrow.parquet as pq
-import yaml
+
+from paths import AUDIO_DATA_DIR, MERGED_DATASET_DIR, POSE_DATA_DIR
 
 # Settings:
 EXTRACT_ONLY_POSE_TOKENS = True
@@ -52,8 +53,7 @@ POSE_CODEBOOKS_PER_FRAME = 12
 POSE_CODEBOOK_SIZE = 1024
 AUDIO_CODEBOOKS_PER_ROW = 32
 
-CONFIG_PATH = Path(__file__).parent / "config.yaml"
-OUT_DIR = "/mnt/somfs/pose_cond/merged_pose_audio_dataset"
+OUT_DIR = MERGED_DATASET_DIR
 
 
 def build_text_column(words_col, starts_col, ends_col, chunk_start_col):
@@ -159,11 +159,10 @@ def truncate_audio_codebooks(mimi_col, n_keep):
 
 
 def main():
-    cfg = yaml.safe_load(CONFIG_PATH.read_text())
-    pose_files = sorted(glob.glob(f"{cfg['pose_data_dir']}/*.parquet"))
-    audio_files = sorted(glob.glob(f"{cfg['audio_data_dir']}/*.parquet"))
-    print(f"pose:  {len(pose_files)} file(s) under {cfg['pose_data_dir']}")
-    print(f"audio: {len(audio_files)} file(s) under {cfg['audio_data_dir']}")
+    pose_files = sorted(glob.glob(f"{POSE_DATA_DIR}/*.parquet"))
+    audio_files = sorted(glob.glob(f"{AUDIO_DATA_DIR}/*.parquet"))
+    print(f"pose:  {len(pose_files)} file(s) under {POSE_DATA_DIR}")
+    print(f"audio: {len(audio_files)} file(s) under {AUDIO_DATA_DIR}")
 
     out_dir = Path(OUT_DIR)
 

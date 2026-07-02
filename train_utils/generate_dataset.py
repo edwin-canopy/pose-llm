@@ -7,11 +7,16 @@ should hit OUT_DIR directly.
 """
 
 import os
+import sys
+from pathlib import Path
 
 from datasets import load_dataset
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from paths import MERGED_DATASET_DIR
 
-DATA_DIR = "/mnt/somfs/pose_cond/merged_pose_audio_dataset"
+
+DATA_DIR = MERGED_DATASET_DIR
 OUT_DIR = f"{DATA_DIR}/hf_pose_dataset"
 NUM_PROC = int(os.environ.get("NUM_PROC", "1"))
 

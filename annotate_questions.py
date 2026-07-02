@@ -2,9 +2,9 @@
 Scaffolding for annotating the merged pose+audio dataset with Gemma 3 4B.
 
 Loads the instruction-tuned Gemma 3 4B from HuggingFace and streams rows from
-the merged parquet dataset at /mnt/somfs/pose_cond/merged_pose_audio_dataset.
-The actual annotation task lives in `build_prompt` — replace the placeholder
-prompt with whatever question-generation logic we land on.
+the merged parquet dataset at `paths.MERGED_DATASET_DIR`. The actual annotation
+task lives in `build_prompt` — replace the placeholder prompt with whatever
+question-generation logic we land on.
 """
 
 from __future__ import annotations
@@ -21,9 +21,11 @@ import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from paths import MERGED_DATASET_DIR
 
-DATASET_DIR = "/mnt/somfs/pose_cond/merged_pose_audio_dataset"
-OUTPUT_PATH = "/mnt/somfs/pose_cond/merged_pose_audio_dataset/questions.parquet"
+
+DATASET_DIR = MERGED_DATASET_DIR
+OUTPUT_PATH = f"{MERGED_DATASET_DIR}/questions.parquet"
 MODEL_ID = "google/gemma-3-4b-it"
 
 NUM_PROCESSES = 5

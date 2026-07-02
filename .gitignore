@@ -8,6 +8,7 @@ uv.lock
 *.bin
 *.gif
 *.mp3
-inference_outputs/
+inference_outputs**
 checkpoints/
 wandb/
+dir.toml

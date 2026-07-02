@@ -25,10 +25,11 @@ from transformers import AutoConfig, AutoTokenizer, Trainer, TrainingArguments
 
 from collators import PoseSpeechMonoCollator
 from models.backbone_model import DEFAULT_BACKBONE_ARCH, EndToEndModel
+from paths import MERGED_DATASET_DIR
 from train_utils.length_matching_sampler import LengthBudgetBatchSampler
 
 
-DATASET_DIR = "/mnt/somfs/pose_cond/merged_pose_audio_dataset/hf_pose_dataset_filtered"
+DATASET_DIR = f"{MERGED_DATASET_DIR}/hf_pose_dataset_filtered"
 
 
 CONFIG = yaml.safe_load(open("config.yaml"))

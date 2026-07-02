@@ -1,0 +1,21 @@
+# Filesystem paths for this VM. Copy to `dir.toml` and edit for your machine.
+# Every path used by the repo lives here — nothing should hardcode /mnt/somfs.
+
+# Root merged pose+audio parquet dataset (produced by preprocess_data.py).
+# Subdirs used downstream: hf_pose_dataset_filtered/, questions.parquet
+merged_dataset_dir = "/mnt/somfs/pose_cond/merged_pose_audio_dataset"
+
+# Raw per-clip pose NPZ files (used by inference/eval_pose.py).
+pose_npz_dir = "/mnt/somfs/pose_cond/pose_cond_npz"
+
+# Parquet dir of pose token ids (input to preprocess_data.py merge).
+pose_data_dir = "/mnt/somfs/pose_cond/input_ids_2x_12cb_shift"
+
+# Parquet dir of audio tokens (input to preprocess_data.py merge).
+audio_data_dir = "/mnt/somfs/pose_cond/audio_tokenized/tiktok-pipeline-merged"
+
+# Xabi pose tokenizer weights (HF repo id or local dir).
+xabi_tokenizer_path = "/mnt/somfs/xabi-checkpoints/pose-tokenizer-2x-12cb-lossshift1"
+
+# James pose tokenizer weights (HF repo id or local dir).
+james_tokenizer_path = "/mnt/somfs/james-checkpoints/pose-tokenizer-james/cb_size_2048/base-causal-2x-wide-16cb-qd0.5-lr1e-4-lossshift1-root-frame-0-cb_size_2048/step_200000"

@@ -258,11 +258,17 @@ class PoseSpeechMonoCollator:
 if __name__ == "__main__":
     # quick sanity check: load a few rows of the preprocessed dataset, run
     # __call__, and print output shapes / dtypes.
+    import sys
+    from pathlib import Path
+
     import yaml
     from datasets import load_dataset
     from transformers import AutoTokenizer
 
-    DATA_DIR = "/mnt/somfs/pose_cond/merged_pose_audio_dataset"
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from paths import MERGED_DATASET_DIR
+
+    DATA_DIR = MERGED_DATASET_DIR
     N_SAMPLES = 2
     POSE_CODEBOOKS = 8  # matches NUM_POSE_CODEBOOKS in preprocess_data.py
 

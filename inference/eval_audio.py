@@ -17,8 +17,10 @@ import torch
 from datasets import load_from_disk
 from transformers import MimiModel
 
+from paths import MERGED_DATASET_DIR
 
-DATASET_DIR = "/mnt/somfs/pose_cond/merged_pose_audio_dataset/hf_pose_dataset_filtered"
+
+DATASET_DIR = f"{MERGED_DATASET_DIR}/hf_pose_dataset_filtered"
 INFERENCE_OUTPUTS_DIR = "/home/edwin/pose-llm/inference_outputs"
 
 N_SAMPLES = 4

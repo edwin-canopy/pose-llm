@@ -19,15 +19,15 @@ import torch
 import yaml
 from datasets import load_from_disk
 
+from paths import MERGED_DATASET_DIR, POSE_NPZ_DIR, XABI_TOKENIZER_PATH
 from pose_tokenizer_xabi import PoseTokenizer
 from pose_tokenizer_xabi.data.kinematic import SELECTED_INDICES
 from decode_pose import decoded_features_to_positions, render_pose_gif
 
 
-DATASET_DIR = "/mnt/somfs/pose_cond/merged_pose_audio_dataset/hf_pose_dataset_filtered"
-POSE_NPZ_DIR = "/mnt/somfs/pose_cond/pose_cond_npz"
+DATASET_DIR = f"{MERGED_DATASET_DIR}/hf_pose_dataset_filtered"
 INFERENCE_OUTPUTS_DIR = "/home/edwin/pose-llm/inference_outputs"
-TOKENIZER_PATH = "/mnt/somfs/xabi-checkpoints/pose-tokenizer-2x-12cb-lossshift1"
+TOKENIZER_PATH = XABI_TOKENIZER_PATH
 
 CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config.yaml"))
 CONFIG = yaml.safe_load(open(CONFIG_PATH))

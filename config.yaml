@@ -1,11 +1,7 @@
 
-pose_data_dir: "/mnt/somfs/pose_cond/input_ids_2x_12cb_shift"
-audio_data_dir: "/mnt/somfs/pose_cond/audio_tokenized/tiktok-pipeline-merged"
-
-
 wandb:
   project: pose-llm
-  entity: null                     # set to wandb team/user; null lets WANDB_ENTITY env var or wandb default take over
+  entity: canopy-labs                     # set to wandb team/user
   run_name: pose-llm-test-interleaved     # overridable per run with RUN_NAME env var
 
 

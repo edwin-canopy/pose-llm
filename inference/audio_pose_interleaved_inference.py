@@ -40,13 +40,14 @@ from transformers import AutoConfig, AutoTokenizer, Qwen3ForCausalLM
 
 from collators import PoseSpeechMonoCollator
 from models.backbone_model import DEFAULT_BACKBONE_ARCH, EndToEndModel
+from paths import MERGED_DATASET_DIR
 
 
 DISABLE_AUDIO_DEPTH_MODEL = False
 DISABLE_POSE_DEPTH_MODEL = False
 TEACHER_FORCE_TEXT = True
 
-DATASET_DIR = "/mnt/somfs/pose_cond/merged_pose_audio_dataset/hf_pose_dataset_filtered"
+DATASET_DIR = f"{MERGED_DATASET_DIR}/hf_pose_dataset_filtered"
 CHECKPOINTS_DIR = "/home/edwin/pose-llm/checkpoints"
 CHECKPOINT_NAME = "latest" # e.g. "checkpoint-33000" or "latest"
 INFERENCE_OUTPUTS_DIR = "/home/edwin/pose-llm/inference_outputs"
