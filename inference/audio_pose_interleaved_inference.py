@@ -384,7 +384,7 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
             ]
             audio0 = _sample(audio0_logits, DO_SAMPLE, TEMPERATURE, TOP_P, TOP_K)
 
-            # cache the text-position hidden state for both depth models
+            # column-0 (text-position) hidden: the state that produced audio_cb0. Seeds audio depth.
             text_hidden = outputs.hidden_states[-1][:, text_position, :]
 
             # --- audio depth pass ---
@@ -417,6 +417,9 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
             ]
             pose0 = _sample(pose0_logits, DO_SAMPLE, TEMPERATURE, TOP_P, TOP_K)
 
+            # column-1 (audio-position) hidden: the state that produced pose_cb0. Seeds pose depth.
+            audio_hidden = outputs.hidden_states[-1][:, audio_position, :]
+
             # --- pose depth pass ---
             if DISABLE_POSE_DEPTH_MODEL:
                 pose_tail = [0] * (POSE_DEPTH - 1)
@@ -424,7 +427,7 @@ for sample_idx in range(NUM_GENERATE_SAMPLES):
                 pose_tail = _generate_depth_codes(
                     model.pose_depth_model,
                     model.pose_projection,
-                    text_hidden,
+                    audio_hidden,
                     pose0,
                     POSE_DEPTH,
                     POSE_CODEBOOK_SIZE,

@@ -60,7 +60,7 @@ special_tokens:
 
 
 backbone:
-  weights_path: null   # if set, load pretrained weights from here; architecture is fixed (see DEFAULT_BACKBONE_ARCH)
+  weights_path: InternalCan/qwen-multitask-ckpt-29000   # if set, load pretrained weights from here; architecture is fixed (see DEFAULT_BACKBONE_ARCH)
   hidden_size: 2560
   use_reference_pose: true
 

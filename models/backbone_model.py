@@ -23,12 +23,21 @@ START_OF_ASR_TOKEN = 151938 # start of asr task token (before the transcribe thi
 
 class EndToEndModel(Qwen3ForCausalLM):
     
-    def __init__(self, config, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, config, *args, yaml_config=None, **kwargs):
+        # Two call conventions:
+        #   fresh init:      EndToEndModel(yaml_dict, hf_config)
+        #   from_pretrained: EndToEndModel(hf_pretrained_config, yaml_config=yaml_dict)
+        # HF calls cls(hf_config, *model_args, **model_kwargs); yaml_config rides in via kwargs.
+        if isinstance(config, dict):
+            yaml_config = config
+            super().__init__(*args, **kwargs)
+        else:
+            assert yaml_config is not None, "yaml_config kwarg required when first arg is a PreTrainedConfig"
+            super().__init__(config, *args, **kwargs)
 
-        backbone_cfg = config["backbone"]
-        audio_cfg = config["audio_depth_model"]
-        pose_cfg = config["pose_depth_model"]
+        backbone_cfg = yaml_config["backbone"]
+        audio_cfg = yaml_config["audio_depth_model"]
+        pose_cfg = yaml_config["pose_depth_model"]
 
         self.hidden_size = backbone_cfg["hidden_size"]
         self.audio_hidden_size = audio_cfg["hidden_size"]
@@ -39,7 +48,7 @@ class EndToEndModel(Qwen3ForCausalLM):
         self.audio_codebook_size = audio_cfg["codebook_size"]
         self.pose_codebook_size = pose_cfg["codebook_size"]
 
-        attn_impl = config["training"]["attn_implementation"]
+        attn_impl = yaml_config["training"]["attn_implementation"]
         audio_depth_config = AutoConfig.from_pretrained(
             DEFAULT_DEPTH_ARCH, attn_implementation=attn_impl
         )
@@ -78,8 +87,8 @@ class EndToEndModel(Qwen3ForCausalLM):
             self.pose_depth * self.pose_codebook_size, self.hidden_size
         )
 
-        self.alpha_audio = config["training"]["alpha_audio"]
-        self.alpha_pose = config["training"]["alpha_pose"]
+        self.alpha_audio = yaml_config["training"]["alpha_audio"]
+        self.alpha_pose = yaml_config["training"]["alpha_pose"]
         self.audio_model_train_split = audio_cfg["training_split"]
         self.pose_model_train_split = pose_cfg["training_split"]
         self.use_reference_pose = backbone_cfg["use_reference_pose"]
@@ -254,7 +263,11 @@ class EndToEndModel(Qwen3ForCausalLM):
         backbone_hidden_states = backbone_outputs.hidden_states[-1]
 
         text_stride_offset = 1 if self.use_reference_pose else 0
+        # Column-0 hidden (sits on the text column) is the state that predicts audio_cb0
+        # — seeds the audio depth head. Column-1 hidden (sits on the audio-cb0 column) is
+        # the state that predicts pose_cb0 — seeds the pose depth head.
         text_hidden_per_frame = backbone_hidden_states[:, text_stride_offset::3]
+        audio_hidden_per_frame = backbone_hidden_states[:, text_stride_offset + 1::3]
 
         # per-column backbone losses (text / audio cb0 / pose cb0) for logging only.
         # outputs.logits is materialized when fused_linear_cross_entropy is off.
@@ -310,8 +323,8 @@ class EndToEndModel(Qwen3ForCausalLM):
 
 
         # pose depth pass --------------
-        
-        projected_hidden_states = self.pose_projection(text_hidden_per_frame[keep_pose])
+
+        projected_hidden_states = self.pose_projection(audio_hidden_per_frame[keep_pose])
         pose_depth_embeds = self.pose_depth_model.get_input_embeddings()(true_pose_depth_ids)
         pose_depth_inputs = torch.cat([projected_hidden_states.unsqueeze(1), pose_depth_embeds], dim=1)
 
@@ -330,6 +343,19 @@ class EndToEndModel(Qwen3ForCausalLM):
 
         pose_depth_loss = pose_depth_outputs.loss
 
+        # per-codebook pose depth losses (codebooks 1..pose_depth-1). Input position i
+        # in pose_depth_inputs predicts pose_depth_labels[:, i+1]; codebook k label sits
+        # at label position k+1, so the predicting logit is at position k.
+        with torch.no_grad():
+            pose_depth_logits = pose_depth_outputs.logits
+            per_codebook_pose_losses = {}
+            for cb_idx in range(1, self.pose_depth):
+                logits_cb = pose_depth_logits[:, cb_idx, :].reshape(-1, pose_depth_logits.size(-1))
+                labels_cb = pose_depth_labels[:, cb_idx + 1].reshape(-1)
+                per_codebook_pose_losses[f"pose_depth_cb{cb_idx}_loss"] = F.cross_entropy(
+                    logits_cb, labels_cb, ignore_index=-100
+                )
+
         loss = (1 - self.alpha_audio - self.alpha_pose) * backbone_loss + self.alpha_audio * audio_depth_loss + self.alpha_pose * pose_depth_loss
         return {
             "loss": loss,
@@ -339,6 +365,7 @@ class EndToEndModel(Qwen3ForCausalLM):
             "pose_backbone_loss": pose_backbone_loss,
             "audio_depth_loss": audio_depth_loss.detach(),
             "pose_depth_loss": pose_depth_loss.detach(),
+            **per_codebook_pose_losses,
         }
 
     

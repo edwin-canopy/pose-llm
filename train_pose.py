@@ -56,7 +56,15 @@ if tokenizer.pad_token is None:
 # model ----------------------------------------------------------------------
 # EndToEndModel: Qwen3 backbone + audio_depth_model + pose_depth_model
 if BACKBONE_CONFIG["weights_path"]:
-    model = EndToEndModel.from_pretrained(BACKBONE_CONFIG["weights_path"], config=CONFIG)
+    backbone_arch_config = AutoConfig.from_pretrained(
+        BACKBONE_CONFIG["weights_path"],
+        attn_implementation=TRAINING_CONFIG["attn_implementation"],
+    )
+    model = EndToEndModel.from_pretrained(
+        BACKBONE_CONFIG["weights_path"],
+        config=backbone_arch_config,
+        yaml_config=CONFIG,
+    )
 else:
     backbone_arch_config = AutoConfig.from_pretrained(
         DEFAULT_BACKBONE_ARCH,
@@ -163,6 +171,7 @@ class LengthPackedTrainer(Trainer):
         "pose_backbone_loss",
         "audio_depth_loss",
         "pose_depth_loss",
+        *(f"pose_depth_cb{i}_loss" for i in range(1, POSE_DEPTH_CONFIG["residual_depth"])),
     )
 
     def __init__(self, *args, **kwargs):
